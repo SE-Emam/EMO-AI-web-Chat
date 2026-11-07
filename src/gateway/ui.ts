@@ -58,6 +58,7 @@ async function api(path, opts={}){
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function fmtMs(ms){ms=Math.max(0,ms||0); const s=Math.floor(ms/1000); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const sec=s%60; return h? h+'h '+m+'m '+sec+'s': m? m+'m '+sec+'s': sec+'s'}
 async function refresh(){
+  try {
   const st=await api('/api/gateway/status');
   document.getElementById('baseUri').textContent=st.gateway.baseUriDisplay;
   document.getElementById('apiKey').textContent=st.gateway.api;
@@ -109,8 +110,13 @@ async function refresh(){
     finally{ btn.disabled=false; if(btn.isConnected) btn.textContent=old; }
   });
 }
+  } catch(e) {
+    document.getElementById('gwStatus').textContent='خطأ في الاتصال';
+    console.error(e);
+  }
+}
 async function beat(){ try{ await api('/api/gateway/heartbeat',{method:'POST'});}catch{} }
-beat(); setInterval(beat, 5000); refresh(); setInterval(refresh, 4000);
+beat(); setInterval(beat, 5000); refresh().catch(()=>{}); setInterval(()=>refresh().catch(()=>{}), 4000);
 </script>
 </body></html>`;
 
