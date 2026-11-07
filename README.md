@@ -246,7 +246,7 @@ for await (const chunk of stream) {
 
 ### Integration with Emo-AI-Gateway / New API / One API
 
-Arena WebBridge acts as a local upstream provider for multi-tenant AI gateways:
+Arena WebBridge acts as a local upstream provider for multi-tenant AI gateways. See [docs/gateway-integration.md](docs/gateway-integration.md) for complete details on Docker host networking, failover strategies, and advanced gateway routing.
 
 1. **Open New API / One API / Emo-AI-Gateway Admin Dashboard**.
 2. **Add a New Channel**:

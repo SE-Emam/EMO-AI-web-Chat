@@ -10,7 +10,7 @@
     "arena-webbridge": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && chmod +x dist/cli.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "start": "tsx src/cli.ts serve",
