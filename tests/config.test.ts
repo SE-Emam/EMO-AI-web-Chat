@@ -9,6 +9,7 @@ describe('Config Loader', () => {
   beforeEach(() => {
     // Clean relevant env vars before each test
     delete process.env.PORT;
+    delete process.env.ARENA_PORT;
     delete process.env.HOST;
     delete process.env.USER_DATA_DIR;
     delete process.env.ARENA_BASE_URL;
@@ -29,6 +30,12 @@ describe('Config Loader', () => {
     expect(config.userDataDir).toBe(expectedUserDataDir);
     expect(config.arenaBaseUrl).toBe('https://arena.ai');
     expect(config.headless).toBe(true);
+  });
+
+  it('should override port via ARENA_PORT environment variable', () => {
+    process.env.ARENA_PORT = '9999';
+    const config = loadConfig();
+    expect(config.port).toBe(9999);
   });
 
   it('should override configuration via environment variables', () => {

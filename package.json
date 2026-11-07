@@ -5,13 +5,16 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "arena-webbridge": "dist/cli.js"
+    "arena-web-api": "./dist/cli.js",
+    "webbridge": "./dist/cli.js",
+    "arena-webbridge": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "start": "tsx src/cli.ts serve"
+    "start": "tsx src/cli.ts serve",
+    "login": "tsx src/cli.ts login"
   },
   "keywords": [
     "arena",

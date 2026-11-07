@@ -35,7 +35,8 @@ export const DEFAULT_CONFIG: Config = {
  * 3. Default configuration
  */
 export function loadConfig(overrides?: Partial<Config>): Config {
-  const envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : undefined;
+  const rawPort = process.env.ARENA_PORT || process.env.PORT;
+  const envPort = rawPort ? parseInt(rawPort, 10) : undefined;
   const envHost = process.env.HOST;
   const envUserDataDir = process.env.USER_DATA_DIR
     ? resolveHomePath(process.env.USER_DATA_DIR)

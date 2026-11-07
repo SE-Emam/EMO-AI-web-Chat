@@ -6,5 +6,6 @@ export * from './server/app.js';
 export * from './arena/selectors.js';
 export * from './arena/models.js';
 export * from './arena/driver.js';
+export * from './cli.js';
 
 
