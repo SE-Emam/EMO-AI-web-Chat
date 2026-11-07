@@ -97,6 +97,8 @@ export function createServer(driver: ArenaDriver, config?: Partial<Config>): Fas
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': '*',
           });
         }
       };
@@ -127,15 +129,17 @@ export function createServer(driver: ArenaDriver, config?: Partial<Config>): Fas
             },
           });
         } else {
-          reply.raw.write(
-            `data: ${JSON.stringify({
-              error: {
-                message: error.message || 'Stream processing failed',
-                type: error.type || 'server_error',
-              },
-            })}\n\n`
-          );
-          reply.raw.end();
+          if (!reply.raw.destroyed && reply.raw.writable) {
+            reply.raw.write(
+              `data: ${JSON.stringify({
+                error: {
+                  message: error.message || 'Stream processing failed',
+                  type: error.type || 'server_error',
+                },
+              })}\n\n`
+            );
+            reply.raw.end();
+          }
         }
       } finally {
         request.raw.off('close', onClose);
