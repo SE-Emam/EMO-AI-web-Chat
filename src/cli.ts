@@ -8,9 +8,13 @@ import type { FastifyInstance } from 'fastify';
 import { loadConfig, resolveHomePath } from './config.js';
 import { BrowserManager } from './browser/manager.js';
 import { DefaultArenaDriver } from './arena/driver.js';
+import { ZaiDriver } from './arena/zai-driver.js';
+import { RoutingDriver, type DriverRoute } from './arena/routing-driver.js';
 import { createServer } from './server/app.js';
 import { KNOWN_ARENA_MODELS } from './arena/models.js';
 import type { ArenaDriver, Config } from './types.js';
+import { ZAI_MODELS } from './arena/zai-models.js';
+import { ZaiWebDriver } from './arena/zai-web-driver.js';
 
 export interface ProfileStatus {
   userDataDir: string;
@@ -22,6 +26,11 @@ export interface ProfileStatus {
     hasLocalStorage: boolean;
     fileCount: number;
   };
+}
+
+/** Whether a Z.AI REST key is configured at process level (for CLI listings). */
+function configHasZai(): boolean {
+  return typeof process.env.ZAI_API_KEY === 'string' && process.env.ZAI_API_KEY.length > 0;
 }
 
 /**
@@ -163,9 +172,25 @@ export function createCli(services: CliServices = {}): Command {
         ? services.browserManagerFactory(config)
         : new BrowserManager(config);
 
-      const driver = services.driverFactory
+      const arenaDriver = services.driverFactory
         ? services.driverFactory(browserManager, config)
         : new DefaultArenaDriver(browserManager as BrowserManager, config);
+
+      // Provider chain (first match wins, failures fall back to the next):
+      //   glm-* → Z.AI REST API (if ZAI_API_KEY) → chat.z.ai web session (if enabled) → Arena browser
+      //   else  → Arena browser directly
+      const routes: DriverRoute[] = [];
+      if (config.zai) {
+        console.log(`Z.AI REST provider enabled (default: ${config.zai.defaultModel}). glm-* requests go direct to api.z.ai.`);
+        routes.push({ name: 'zai-api', driver: new ZaiDriver(config.zai), matches: (m) => m.startsWith('glm-') });
+      }
+      if (config.zaiWeb?.enabled) {
+        console.log(`Z.AI web-session provider enabled (profile: ${config.zaiWeb.userDataDir}, headed=${!config.zaiWeb.headless}). Captchas are solved by you in the visible window.`);
+        routes.push({ name: 'zai-web', driver: new ZaiWebDriver(config.zaiWeb), matches: (m) => m.startsWith('glm-') });
+      }
+      routes.push({ name: 'arena-browser', driver: arenaDriver, matches: () => true });
+
+      let driver: ArenaDriver = new RoutingDriver(routes);
 
       const app = services.serverFactory
         ? services.serverFactory(driver, config)
@@ -190,26 +215,31 @@ export function createCli(services: CliServices = {}): Command {
     });
 
   // Command: models
+  const availableModels = (): string[] => Array.from(new Set([...ZAI_MODELS, ...KNOWN_ARENA_MODELS]));
+
   program
     .command('models')
-    .description('List available Arena models')
+    .description('List available models (Z.AI first when a key is configured, then Arena)')
     .option('--json', 'Output models in JSON format')
     .action((options) => {
+      const zaiFirst = configHasZai();
+      const list = zaiFirst ? availableModels() : KNOWN_ARENA_MODELS;
       if (options.json) {
-        logger.log(JSON.stringify(KNOWN_ARENA_MODELS, null, 2));
+        logger.log(JSON.stringify(list, null, 2));
       } else {
         if (logger.table) {
           logger.table(
-            KNOWN_ARENA_MODELS.map((id, index) => ({
+            list.map((id, index) => ({
               '#': index + 1,
               'Model ID': id,
+              Provider: (configHasZai() && ZAI_MODELS.includes(id)) ? 'z.ai' : 'arena',
             }))
           );
         } else {
-          const rows = KNOWN_ARENA_MODELS.map(
+          const rows = list.map(
             (id, index) => `${String(index + 1).padStart(2, ' ')}. ${id}`
           );
-          logger.log(`Available Arena Models (${KNOWN_ARENA_MODELS.length}):\n${rows.join('\n')}`);
+          logger.log(`Available Models (${list.length}):\n${rows.join('\n')}`);
         }
       }
     });

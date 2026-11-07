@@ -42,45 +42,85 @@ export class DefaultArenaDriver implements ArenaDriver {
       throw new Error('Request was aborted');
     }
 
+    console.log(`[ArenaDriver] Starting sendMessage with model: ${model}`);
     const resolvedModel = resolveModelAlias(model);
     const prompt = formatMessages(messages);
+    console.log(`[ArenaDriver] Getting page...`);
     const page = await this.browserManager.getOrCreatePage();
+    console.log(`[ArenaDriver] Page URL is: ${page.url ? page.url() : ''}`);
 
     // Check for Cloudflare challenge before doing anything
     await this.checkCloudflare(page);
 
-    // Ensure we are on the arena direct chat page
-    const directChatUrl = `${this.config.arenaBaseUrl}/?arena=direct`;
-    const currentUrl = page.url ? page.url() : '';
-    if (
-      !currentUrl ||
-      currentUrl === 'about:blank' ||
-      !currentUrl.includes(this.config.arenaBaseUrl)
-    ) {
-      await page.goto(directChatUrl).catch(() => {});
-    }
+    // Ensure we are on a clean direct chat page
+    const directChatUrl = `${this.config.arenaBaseUrl}/text/direct`;
+    console.log(`[ArenaDriver] Preparing direct chat page...`);
+    await page.goto(directChatUrl, { waitUntil: 'commit' }).catch((e) =>
+      console.log('[ArenaDriver] goto error:', e.message)
+    );
+    await this.waitForPageReady(page);
 
     // Check for Cloudflare challenge after navigation
     await this.checkCloudflare(page);
 
+    // Dismiss terms of use / privacy modal if present
+    await this.dismissTermsModal(page);
+
     // Switch to Direct Chat tab if visible
     await this.switchToDirectChatTab(page);
 
-    // Select model if available
-    await this.selectModel(page, resolvedModel);
+    // Select model only if explicitly requested (not auto/default)
+    if (
+      model &&
+      model !== 'auto' &&
+      model !== 'default' &&
+      resolvedModel !== DEFAULT_MODEL
+    ) {
+      console.log(`[ArenaDriver] Selecting model: ${resolvedModel}`);
+      await this.selectModel(page, resolvedModel);
+    }
 
-    // Find and fill prompt input
+    // Wait for prompt input to be visible and ready
+    console.log(`[ArenaDriver] Finding prompt input...`);
     const inputLoc = await this.findPromptInput(page);
+    await inputLoc.waitFor?.({ state: 'visible', timeout: 10000 }).catch(() => {});
+    if (page.waitForTimeout) {
+      await page.waitForTimeout(1000);
+    }
+
+    await inputLoc.click?.().catch(() => {});
     await inputLoc.fill(prompt);
+    if (page.waitForTimeout) {
+      await page.waitForTimeout(300);
+    }
+    console.log(`[ArenaDriver] Filled prompt. Finding send button...`);
 
     // Click send button
     const sendLoc = await this.findSendButton(page);
-    if (sendLoc) {
-      await sendLoc.click();
-    } else {
+    let sent = false;
+    const isEnabled =
+      typeof sendLoc?.isEnabled === 'function'
+        ? await sendLoc.isEnabled().catch(() => false)
+        : true;
+    if (
+      sendLoc &&
+      (await sendLoc.isVisible().catch(() => false)) &&
+      isEnabled
+    ) {
+      console.log(`[ArenaDriver] Clicking send button...`);
+      await sendLoc.click().catch((e) => console.log('[ArenaDriver] click send error:', e.message));
+      sent = true;
+    }
+    if (!sent) {
+      console.log(`[ArenaDriver] Pressing enter on prompt input...`);
       await inputLoc.press?.('Enter').catch(() => {});
     }
 
+    // If terms modal popped up after clicking send, dismiss and retry send
+    await this.dismissTermsModal(page);
+
+    await page.screenshot?.({ path: '/tmp/arena-driver-state.png' }).catch(() => {});
+    console.log(`[ArenaDriver] Saved screenshot to /tmp/arena-driver-state.png. Entering streamResponse...`);
     // Stream response until generation completes or abort is signaled
     return this.streamResponse(page, onChunk, signal);
   }
@@ -90,6 +130,45 @@ export class DefaultArenaDriver implements ArenaDriver {
    */
   async close(): Promise<void> {
     await this.browserManager.close();
+  }
+
+  private async dismissTermsModal(page: Page): Promise<void> {
+    try {
+      for (const sel of ARENA_SELECTORS.termsAgree) {
+        const loc = page.locator(sel);
+        if (
+          (await loc.count().catch(() => 0)) > 0 &&
+          (await loc.first().isVisible().catch(() => false))
+        ) {
+          await loc.first().click().catch(() => {});
+          await page.waitForTimeout?.(500).catch(() => {});
+          break;
+        }
+      }
+    } catch {
+      // Ignore terms modal dismissal errors
+    }
+  }
+
+  private async waitForPageReady(page: Page): Promise<void> {
+    try {
+      if (typeof page.title === 'function') {
+        for (let i = 0; i < 15; i++) {
+          const title = (await page.title().catch(() => '')) || '';
+          if (title && !title.includes('Just a moment')) {
+            break;
+          }
+          if (page.waitForTimeout) {
+            await page.waitForTimeout(1000);
+          }
+        }
+      }
+      if (page.waitForTimeout) {
+        await page.waitForTimeout(1000);
+      }
+    } catch {
+      // Ignore
+    }
   }
 
   private async checkCloudflare(page: Page): Promise<void> {
@@ -154,6 +233,7 @@ export class DefaultArenaDriver implements ArenaDriver {
 
           // If dropdown supports text fill
           await dropdown.fill?.(targetModel).catch(() => {});
+          await page.keyboard?.press?.('Escape').catch(() => {});
           return;
         }
       }
@@ -176,7 +256,9 @@ export class DefaultArenaDriver implements ArenaDriver {
         // Continue searching
       }
     }
-    return page.locator(ARENA_SELECTORS.promptInput[0]).first();
+    const fallback = page.locator(ARENA_SELECTORS.promptInput[0]).first();
+    await fallback.waitFor?.({ state: 'visible', timeout: 5000 }).catch(() => {});
+    return fallback;
   }
 
   private async findSendButton(page: Page): Promise<Locator | null> {
@@ -213,6 +295,34 @@ export class DefaultArenaDriver implements ArenaDriver {
     }
   }
 
+  private async checkRateLimit(page: Page): Promise<void> {
+    try {
+      const isRateLimited = await page.evaluate?.(() => {
+        if (typeof document === 'undefined') return false;
+        const text = document.body ? document.body.innerText : '';
+        return (
+          text.includes("You've reached a rate limit") ||
+          text.includes('rate limit. Please try again')
+        );
+      });
+      if (isRateLimited) {
+        const error = new Error(
+          "You've reached a rate limit on Arena. Please try again in a moment."
+        ) as Error & { statusCode?: number; type?: string };
+        error.statusCode = 429;
+        error.type = 'rate_limit_error';
+        throw error;
+      }
+    } catch (err: unknown) {
+      if (
+        err instanceof Error &&
+        (err as { statusCode?: number }).statusCode === 429
+      ) {
+        throw err;
+      }
+    }
+  }
+
   private async isGenerating(page: Page): Promise<boolean> {
     try {
       for (const sel of ARENA_SELECTORS.stopButton) {
@@ -231,6 +341,32 @@ export class DefaultArenaDriver implements ArenaDriver {
   }
 
   private async getLatestBotText(page: Page): Promise<string> {
+    try {
+      const text = await page.evaluate?.(() => {
+        if (typeof document === 'undefined') return undefined;
+        const proseElements = Array.from(
+          document.querySelectorAll('.prose, [data-testid="bot"], .bot-message')
+        );
+        const botElements = proseElements.filter((el) => {
+          return (
+            !el.closest('.bg-surface-raised') &&
+            !el.closest('.user-message') &&
+            !el.closest('[data-testid="user"]')
+          );
+        });
+        if (botElements.length > 0) {
+          const last = botElements[botElements.length - 1];
+          return (last as HTMLElement).innerText || '';
+        }
+        return '';
+      });
+      if (typeof text === 'string') {
+        return text;
+      }
+    } catch {
+      // Continue to locator fallback (for unit tests where evaluate throws or is not configured)
+    }
+
     for (const sel of ARENA_SELECTORS.botMessage) {
       try {
         const loc = page.locator(sel);
@@ -271,18 +407,16 @@ export class DefaultArenaDriver implements ArenaDriver {
         throw new Error('Request was aborted');
       }
 
+      await this.checkRateLimit(page);
       await this.checkCloudflare(page);
 
       const generating = await this.isGenerating(page);
-      if (generating) {
-        sawGenerating = true;
-      }
-
       const currentText = await this.getLatestBotText(page);
-
-      if (signal?.aborted) {
-        await this.tryClickStop(page);
-        throw new Error('Request was aborted');
+      if (poll % 10 === 0) {
+        console.log(`[ArenaDriver] poll ${poll}: generating=${generating}, sawGenerating=${sawGenerating}, currentText="${currentText}", accum="${accumulatedText}", stable=${stablePollCount}`);
+      }
+      if (generating || currentText.length > 0) {
+        sawGenerating = true;
       }
 
       if (currentText.length > lastLength) {
@@ -296,12 +430,13 @@ export class DefaultArenaDriver implements ArenaDriver {
       }
 
       // Generation is done if:
-      // 1. We saw generation active and now stop button is gone and we have accumulated text
-      // 2. OR text has been stable for multiple polls and not currently generating
+      // 1. Text is accumulated, no stop button is active, and text has been stable for 5 polls (500ms)
+      // 2. OR text has been stable for >= 15 polls (1.5s)
       if (
-        (sawGenerating && !generating && accumulatedText.length > 0) ||
-        (accumulatedText.length > 0 && stablePollCount >= 10 && !generating)
+        (accumulatedText.length > 0 && !generating && stablePollCount >= 5) ||
+        (accumulatedText.length > 0 && stablePollCount >= 15)
       ) {
+        console.log(`[ArenaDriver] Generation completed! Returning accumulated text (${accumulatedText.length} chars)`);
         break;
       }
 

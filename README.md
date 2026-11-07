@@ -145,6 +145,30 @@ You can configure Arena WebBridge via CLI flags or environment variables:
 | `USER_DATA_DIR` | `~/.arena-webbridge/chrome-profile` | Persistent Chrome profile directory |
 | `ARENA_BASE_URL` | `https://arena.ai` | Base URL of Arena |
 | `HEADLESS` | `true` | Whether to run browser headlessly |
+| `ZAI_API_KEY` | _(empty)_ | **Optional**: enables the Z.AI (Zhipu) provider. When set, `glm-*` model IDs are served directly from Z.AI over plain HTTP (no browser, no Arena rate limits) |
+| `ZAI_BASE_URL` | `https://api.z.ai/api/paas/v4/` | Z.AI API base URL |
+| `ZAI_DEFAULT_MODEL` | `glm-5.3-flash` | Default model when a GLM id is unrecognized (`glm-4.7-flash` / `glm-4.5-flash` are completely free) |
+
+### Z.AI Provider (dual backend)
+
+Arena's own quota is limited and can produce `403 recaptcha` / `429 rate limit` errors on free accounts. When `ZAI_API_KEY` is present, the bridge automatically becomes a **routing proxy**:
+
+| Requested model | Served by | Notes |
+|-----------------|-----------|-------|
+| `glm-5.3-flash`, `glm-5.3`, `glm-4.7`, `glm-4.6`, `glm-4.7-flash`, `glm-4.5-flash`, … | **Z.AI API** (direct fetch, SSE) | `glm-4.7-flash` and `glm-4.5-flash` are **$0** |
+| Everything else (`claude-*`, `gpt-*`, `auto`, …) | **Arena browser** | as before |
+
+Get a Z.AI key at [z.ai/manage-apikey/apikey-list](https://z.ai/manage-apikey/apikey-list), then:
+
+```bash
+export ZAI_API_KEY="your-zai-key"
+./scripts/run-arena-web.sh
+
+# GLM models now bypass the Arena browser entirely:
+curl -s http://127.0.0.1:8989/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"glm-5.3-flash","messages":[{"role":"user","content":"ping"}]}'
+```
 
 ---
 

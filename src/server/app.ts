@@ -77,15 +77,15 @@ export function createServer(driver: ArenaDriver, config?: Partial<Config>): Fas
 
     // Manage request lifecycle and cancellation
     const abortController = new AbortController();
-    const onClose = () => {
+    const onSocketClose = () => {
       if (!reply.raw.writableEnded) {
         abortController.abort();
       }
     };
-    request.raw.on('close', onClose);
-    if (request.signal) {
-      request.signal.addEventListener('abort', () => abortController.abort());
-    }
+    request.raw.socket?.on('close', onSocketClose);
+    request.raw.on('aborted', () => {
+      abortController.abort();
+    });
 
     if (body.stream) {
       let headersSent = false;
@@ -142,7 +142,7 @@ export function createServer(driver: ArenaDriver, config?: Partial<Config>): Fas
           }
         }
       } finally {
-        request.raw.off('close', onClose);
+        request.raw.socket?.off('close', onSocketClose);
       }
       return;
     }
@@ -166,7 +166,7 @@ export function createServer(driver: ArenaDriver, config?: Partial<Config>): Fas
         },
       });
     } finally {
-      request.raw.off('close', onClose);
+      request.raw.socket?.off('close', onSocketClose);
     }
   });
 

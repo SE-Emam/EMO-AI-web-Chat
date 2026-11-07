@@ -152,8 +152,11 @@ describe('CLI - Command parsing and execution', () => {
       mockBrowserManager,
       expect.objectContaining({ port: 9090, host: '0.0.0.0' })
     );
+    // CLI wraps the factory driver in a RoutingDriver provider chain
+    const servedDriver = mockServerFactory.mock.calls[0]?.[0] as any;
+    expect(servedDriver?.routes?.some((r: any) => r.driver === mockDriver)).toBe(true);
     expect(mockServerFactory).toHaveBeenCalledWith(
-      mockDriver,
+      servedDriver,
       expect.objectContaining({ port: 9090, host: '0.0.0.0' })
     );
     expect(mockListen).toHaveBeenCalledWith({ port: 9090, host: '0.0.0.0' });

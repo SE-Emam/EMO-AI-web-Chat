@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { chromium, type BrowserContext, type Page } from 'playwright';
 import { loadConfig } from '../config.js';
 import type { Config } from '../types.js';
@@ -41,6 +42,37 @@ export class BrowserManager {
   }
 
   /**
+   * Cleans up stale Chrome Singleton locks if the owning process is no longer running.
+   */
+  private cleanupStaleLocks(): void {
+    try {
+      const lockPath = path.join(this.config.userDataDir, 'SingletonLock');
+      if (fs.existsSync(lockPath) || fs.lstatSync(lockPath, { throwIfNoEntry: false })) {
+        try {
+          const target = fs.readlinkSync(lockPath);
+          const match = target.match(/-(\d+)$/);
+          if (match) {
+            const pid = parseInt(match[1], 10);
+            try {
+              process.kill(pid, 0); // Check if process is alive
+            } catch {
+              // Process is dead, remove stale locks
+              fs.rmSync(lockPath, { force: true });
+              fs.rmSync(path.join(this.config.userDataDir, 'SingletonCookie'), { force: true });
+              fs.rmSync(path.join(this.config.userDataDir, 'SingletonSocket'), { force: true });
+            }
+          }
+        } catch {
+          // If readlink fails or stat fails, remove dangling link safely
+          fs.rmSync(lockPath, { force: true });
+        }
+      }
+    } catch {
+      // Ignore any filesystem inspection error
+    }
+  }
+
+  /**
    * Internal helper to launch a persistent browser context.
    * Attempts to use the installed Google Chrome channel first, falling back to bundled chromium.
    */
@@ -49,10 +81,13 @@ export class BrowserManager {
       fs.mkdirSync(this.config.userDataDir, { recursive: true });
     }
 
+    this.cleanupStaleLocks();
+
     const baseOptions: Record<string, unknown> = {
       headless,
       viewport: { width: 1280, height: 800 },
       args: ['--disable-blink-features=AutomationControlled'],
+      ignoreDefaultArgs: ['--enable-automation'],
     };
 
     let context: BrowserContext;

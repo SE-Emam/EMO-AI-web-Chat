@@ -1,4 +1,31 @@
 /**
+ * Z.AI (Zhipu) provider configuration. Enabled when `apiKey` is set.
+ */
+export interface ZaiConfig {
+  apiKey: string;
+  baseUrl: string;
+  defaultModel: string;
+  /** Model ID prefixes routed to the Z.AI provider (e.g. 'glm-'). */
+  modelPrefixes: string[];
+}
+
+/**
+ * Z.AI chat.z.ai web-session (scraping) provider. Reuses the Google/Email session
+ * stored in a persistent Chrome profile. Headed mode (headless: false) strongly
+ * recommended — Aliyun's anti-bot captcha auto-passes only with a real window.
+ */
+export interface ZaiWebConfig {
+  enabled: boolean;
+  userDataDir: string;
+  baseUrl: string;
+  headless: boolean;
+  /** Max time to wait for one generation (including captcha auto-verification). */
+  timeoutMs: number;
+  /** Max seconds to wait for the Aliyun slider captcha to auto-pass. */
+  captchaWaitMs: number;
+}
+
+/**
  * Configuration for the Arena WebBridge service.
  */
 export interface Config {
@@ -7,6 +34,10 @@ export interface Config {
   userDataDir: string;
   arenaBaseUrl: string;
   headless: boolean;
+  /** Optional Z.AI provider; when present, matching models bypass the Arena browser. */
+  zai?: ZaiConfig;
+  /** Optional Z.AI web-session provider (chat.z.ai scraping via persistent Chrome). */
+  zaiWeb?: ZaiWebConfig;
 }
 
 /**

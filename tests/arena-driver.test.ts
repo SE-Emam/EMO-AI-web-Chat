@@ -29,6 +29,7 @@ function createMockLocator(opts: MockLocatorOptions = {}): Locator {
   const loc: Partial<Locator> = {
     count: vi.fn().mockResolvedValue(count),
     isVisible: vi.fn().mockResolvedValue(visible),
+    isEnabled: vi.fn().mockResolvedValue(true),
     innerText: vi.fn().mockResolvedValue(text),
     textContent: vi.fn().mockResolvedValue(text),
     allTextContents: vi.fn().mockResolvedValue(texts),
@@ -314,7 +315,7 @@ describe('DefaultArenaDriver', () => {
         onChunk
       );
 
-      expect(fakePage.gotoCalledWith).toBe('https://arena.ai/?arena=direct');
+      expect(fakePage.gotoCalledWith).toBe('https://arena.ai/text/direct');
       expect(filledPrompt).toBe('What is the capital of France?');
       expect(sendClicked).toBe(true);
       expect(result).toBe('Paris is the capital of France.');
