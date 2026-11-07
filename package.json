@@ -7,14 +7,16 @@
   "bin": {
     "arena-web-api": "./dist/cli.js",
     "webbridge": "./dist/cli.js",
-    "arena-webbridge": "./dist/cli.js"
+    "arena-webbridge": "./dist/cli.js",
+    "EMO.ai": "./dist/emo-ai.js"
   },
   "scripts": {
-    "build": "tsc && chmod +x dist/cli.js",
+    "build": "tsc && chmod +x dist/cli.js dist/emo-ai.js 2>/dev/null || (tsc && chmod +x dist/cli.js)",
     "test": "vitest run",
     "test:watch": "vitest",
     "start": "tsx src/cli.ts serve",
-    "login": "tsx src/cli.ts login"
+    "login": "tsx src/cli.ts login",
+    "emo": "tsx src/emo-ai.ts"
   },
   "keywords": [
     "arena",

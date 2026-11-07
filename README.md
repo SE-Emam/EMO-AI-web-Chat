@@ -324,6 +324,27 @@ npm run test:watch
 
 ---
 
+## EMO.ai Local Gateway UI
+
+Local browser UI for managing web providers (no admin/users), with OpenAI-compatible `/v1` endpoints.
+
+```bash
+# from project
+./scripts/EMO.ai
+# or after build/link
+EMO.ai
+# or dev
+npm run emo
+```
+
+Outputs:
+- `base uri: mac.ai/v1`
+- `api: mac`
+
+The UI opens in your browser for provider settings, model selection, runtime/start-stop, and session usage (heartbeat resets when the browser UI closes). To use `mac.ai` locally, add an optional hosts mapping: `127.0.0.1 mac.ai`.
+
+---
+
 ## License
 
 MIT
