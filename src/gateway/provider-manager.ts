@@ -1,3 +1,4 @@
+import { chromium } from 'playwright';
 import type { ArenaDriver, ChatMessage } from '../types.js';
 import type { GatewayConfigFile, ProviderConfig, ProviderRuntimeState, ProviderStatus, WebProviderId } from './types.js';
 import { WEB_PROVIDER_IDS } from './types.js';
@@ -295,6 +296,67 @@ export class ProviderManager {
       },
       close: async () => { await this.close(); },
     };
+  }
+
+  private loginUrl(id: WebProviderId): string {
+    const base = String(this.providerConfig(id).settings.baseUrl || '');
+    switch (id) {
+      case 'arena-browser': return base || 'https://arena.ai';
+      case 'zai-web': return base || 'https://chat.z.ai';
+      case 'claude-web': return (base || 'https://claude.ai').replace(/\/$/, '') + '/login';
+      case 'tencent-ai-web': return base || 'https://aistudio.tencent.ai/';
+      case 'gemini-web': return (base || 'https://gemini.google.com').replace(/\/$/, '') + '/app';
+      case 'qwen-web': return base || 'https://chat.qwen.ai/';
+    }
+  }
+
+  async login(id: WebProviderId): Promise<ProviderRuntimeState> {
+    return this.withLock(id, async () => {
+      // Stop running driver to release profile lock.
+      const rt = this.runtime(id);
+      if (rt.startedAt) { rt.runtimeMsAcc += this.now() - rt.startedAt; rt.startedAt = undefined; }
+      try { await rt.driver?.close?.(); } catch {}
+      rt.driver = undefined;
+      rt.status = 'stopped';
+
+      const cfg = this.providerConfig(id);
+      const userDataDir = String(cfg.settings.userDataDir || '');
+      if (!userDataDir) throw new Error(`Provider ${id} has no userDataDir configured.`);
+      const context = await chromium.launchPersistentContext(userDataDir, {
+        channel: 'chrome',
+        headless: false,
+        viewport: { width: 1280, height: 900 },
+        args: ['--disable-blink-features=AutomationControlled'],
+        ignoreDefaultArgs: ['--enable-automation'],
+      });
+      try {
+        const page = context.pages()[0] || await context.newPage();
+        await page.goto(this.loginUrl(id), { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+        await new Promise<void>((resolve) => context.on('close', () => resolve()));
+      } finally {
+        try { await context.close(); } catch {}
+      }
+
+      cfg.enabled = true;
+      // Auto-pull models after login.
+      try {
+        const factory = this.factories[id] ?? PROVIDER_META[id].defaultFactory;
+        const driver = await factory(cfg);
+        try {
+          const listed = await driver.listModels();
+          cfg.availableModels = uniq([...(cfg.availableModels || []), ...listed]);
+          if (!cfg.selectedModels?.length) cfg.selectedModels = [...cfg.availableModels];
+          rt.lastError = undefined;
+        } finally {
+          try { await driver.close?.(); } catch {}
+        }
+      } catch (e) {
+        rt.lastError = e instanceof Error ? e.message : String(e);
+        // keep enabled; login may have succeeded even if model pull failed
+      }
+      await this.saveConfig().catch(() => {});
+      return this.getState(id);
+    });
   }
 
   async close(): Promise<void> {

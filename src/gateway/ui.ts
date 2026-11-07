@@ -74,7 +74,8 @@ async function refresh(){
         <div class="k">آخر خطأ</div><div style="color:var(--danger)">\${esc(p.lastError||'-')}</div>
       </div>
       <div class="row" style="margin:10px 0">
-        <button class="primary" data-act="start" data-id="\${esc(p.id)}">تشغيل</button>
+        <button class="primary" data-act="login" data-id="\${esc(p.id)}">تسجيل الدخول وجلب النماذج</button>
+        <button data-act="start" data-id="\${esc(p.id)}">تشغيل</button>
         <button class="danger" data-act="stop" data-id="\${esc(p.id)}">إيقاف</button>
         <button data-act="refresh" data-id="\${esc(p.id)}">سحب النماذج</button>
         <button data-act="toggle" data-id="\${esc(p.id)}" data-enabled="\${p.enabled?1:0}">\${p.enabled?'تعطيل':'تفعيل'}</button>
@@ -87,13 +88,18 @@ async function refresh(){
   }
   root.querySelectorAll('button[data-act]').forEach(btn=>btn.onclick=async()=>{
     const id=btn.dataset.id, act=btn.dataset.act;
+    const old=btn.textContent;
     try{
+      if(act==='login'){
+        btn.disabled=true; btn.textContent='جارٍ فتح المتصفح... سجّل الدخول ثم أغلق النافذة';
+        await api('/api/gateway/providers/'+encodeURIComponent(id)+'/login',{method:'POST'});
+      }
       if(act==='start'||act==='stop'||act==='refresh') await api('/api/gateway/providers/'+encodeURIComponent(id)+'/'+act,{method:'POST'});
       if(act==='toggle') await api('/api/gateway/providers/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({enabled: !(btn.dataset.enabled==='1')})});
-
       if(act==='saveModels'){ const card=btn.closest('.card'); const boxes=[...card.querySelectorAll('input[type=checkbox][data-model]')]; const selected=boxes.filter(b=>b.checked).map(b=>b.dataset.model); const avail=boxes.map(b=>b.dataset.model); await api('/api/gateway/providers/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({availableModels:avail,selectedModels:selected})}); }
       await refresh();
-    }catch(e){ alert(e.message); }
+    }catch(e){ alert(e.message||String(e)); }
+    finally{ btn.disabled=false; if(btn.isConnected) btn.textContent=old; }
   });
 }
 async function beat(){ try{ await api('/api/gateway/heartbeat',{method:'POST'});}catch{} }

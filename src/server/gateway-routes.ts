@@ -47,6 +47,15 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
     if (!isProviderId(id)) return reply.status(400).send({ error: { message: 'Unknown provider' } });
     return opts.manager.refreshModels(id);
   });
+  app.post('/api/gateway/providers/:id/login', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!isProviderId(id)) return reply.status(400).send({ error: { message: 'Unknown provider' } });
+    try {
+      return await opts.manager.login(id);
+    } catch (e) {
+      return reply.status(500).send({ error: { message: e instanceof Error ? e.message : String(e) } });
+    }
+  });
   app.patch('/api/gateway/providers/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!isProviderId(id)) return reply.status(400).send({ error: { message: 'Unknown provider' } });
