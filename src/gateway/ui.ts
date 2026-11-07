@@ -109,7 +109,6 @@ async function refresh(){
     }catch(e){ alert(e.message||String(e)); }
     finally{ btn.disabled=false; if(btn.isConnected) btn.textContent=old; }
   });
-}
   } catch(e) {
     document.getElementById('gwStatus').textContent='خطأ في الاتصال';
     console.error(e);
