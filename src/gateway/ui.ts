@@ -32,7 +32,6 @@ small{color:var(--muted)}
       <span class="pill">الحالة: <span id="gwStatus">...</span></span>
       <span class="pill">مدة التشغيل: <span id="gwUptime">...</span></span>
     </div>
-    <p><small>واجهة محلية بدون حسابات/مستخدمين. عداد الجلسة يُصفَّر عند إغلاق المتصفح (heartbeat).</small></p>
   </div>
   <div class="card">
     <h2>الاستهلاك (جلسة المتصفح)</h2>
@@ -91,7 +90,18 @@ async function refresh(){
     try{
       if(act==='start'||act==='stop'||act==='refresh') await api('/api/gateway/providers/'+encodeURIComponent(id)+'/'+act,{method:'POST'});
       if(act==='toggle') await api('/api/gateway/providers/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({enabled: !(btn.dataset.enabled==='1')})});
-      if(act==='add'){ const inp=document.getElementById('manual-'+id); const v=inp.value.trim(); if(!v) return; const card=btn.closest('.card'); const boxes=[...card.querySelectorAll('input[type=checkbox][data-model]')]; const selected=boxes.filter(b=>b.checked).map(b=>b.dataset.model); const avail=[...new Set(boxes.map(b=>b.dataset.model).concat([v]))]; selected.push(v); await api('/api/gateway/providers/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({availableModels:avail,selectedModels:selected})}); inp.value=''; }
+      if(act==='add'){
+        const inp=document.getElementById('manual-'+id);
+        const v=(inp?.value||'').trim();
+        if(!v){ alert('اكتب model id أولًا'); return; }
+        const card=btn.closest('.card');
+        const boxes=[...card.querySelectorAll('input[type=checkbox][data-model]')];
+        const selected=boxes.filter(b=>b.checked).map(b=>b.dataset.model);
+        const avail=[...new Set(boxes.map(b=>b.dataset.model).concat([v]))];
+        if(!selected.includes(v)) selected.push(v);
+        await api('/api/gateway/providers/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({availableModels:avail,selectedModels:selected})});
+        inp.value='';
+      }
       if(act==='saveModels'){ const card=btn.closest('.card'); const boxes=[...card.querySelectorAll('input[type=checkbox][data-model]')]; const selected=boxes.filter(b=>b.checked).map(b=>b.dataset.model); const avail=boxes.map(b=>b.dataset.model); await api('/api/gateway/providers/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({availableModels:avail,selectedModels:selected})}); }
       await refresh();
     }catch(e){ alert(e.message); }
