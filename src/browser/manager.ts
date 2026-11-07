@@ -18,6 +18,7 @@ export class BrowserManager {
   private launcher: PersistentBrowserLauncher;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
+  private initPromise: Promise<Page> | null = null;
 
   constructor(
     config?: Partial<Config>,
@@ -96,27 +97,39 @@ export class BrowserManager {
       }
     }
 
-    // If context is alive, check if any open page exists or create a new page
-    if (this.context) {
-      try {
-        const pages = this.context.pages().filter((p) => !p.isClosed());
-        if (pages.length > 0) {
-          this.page = pages[0];
-          return this.page;
-        }
-        this.page = await this.context.newPage();
-        return this.page;
-      } catch {
-        this.context = null;
-        this.page = null;
-      }
+    if (this.initPromise) {
+      return this.initPromise;
     }
 
-    // Launch new context using configured headless setting
-    const context = await this.launchContext(this.config.headless);
-    const pages = context.pages().filter((p) => !p.isClosed());
-    this.page = pages.length > 0 ? pages[0] : await context.newPage();
-    return this.page;
+    this.initPromise = (async () => {
+      try {
+        // If context is alive, check if any open page exists or create a new page
+        if (this.context) {
+          try {
+            const pages = this.context.pages().filter((p) => !p.isClosed());
+            if (pages.length > 0) {
+              this.page = pages[0];
+              return this.page;
+            }
+            this.page = await this.context.newPage();
+            return this.page;
+          } catch {
+            this.context = null;
+            this.page = null;
+          }
+        }
+
+        // Launch new context using configured headless setting
+        const context = await this.launchContext(this.config.headless);
+        const pages = context.pages().filter((p) => !p.isClosed());
+        this.page = pages.length > 0 ? pages[0] : await context.newPage();
+        return this.page;
+      } finally {
+        this.initPromise = null;
+      }
+    })();
+
+    return this.initPromise;
   }
 
   /**
@@ -134,37 +147,42 @@ export class BrowserManager {
     const page = pages.length > 0 ? pages[0] : await context.newPage();
     this.page = page;
 
-    const url = targetUrl || this.config.arenaBaseUrl;
-    await page.goto(url);
+    try {
+      const url = targetUrl || this.config.arenaBaseUrl;
+      await page.goto(url);
 
-    // Keep browser open until user closes the window or exit signal is received
-    await new Promise<void>((resolve) => {
-      let resolved = false;
-      const onDone = () => {
-        if (!resolved) {
-          resolved = true;
-          process.removeListener('SIGINT', onDone);
-          process.removeListener('SIGTERM', onDone);
-          resolve();
-        }
-      };
+      // Keep browser open until user closes the window or exit signal is received
+      await new Promise<void>((resolve) => {
+        let resolved = false;
+        const onDone = () => {
+          if (!resolved) {
+            resolved = true;
+            process.removeListener('SIGINT', onDone);
+            process.removeListener('SIGTERM', onDone);
+            resolve();
+          }
+        };
 
-      process.once('SIGINT', onDone);
-      process.once('SIGTERM', onDone);
-      context.once('close', onDone);
+        process.once('SIGINT', onDone);
+        process.once('SIGTERM', onDone);
+        context.once('close', onDone);
 
-      page.once('close', () => {
-        // If no more open pages remain in context, resolve
-        try {
-          const remaining = context.pages().filter((p) => !p.isClosed());
-          if (remaining.length === 0) {
+        page.once('close', () => {
+          // If no more open pages remain in context, resolve
+          try {
+            const remaining = context.pages().filter((p) => !p.isClosed());
+            if (remaining.length === 0) {
+              onDone();
+            }
+          } catch {
             onDone();
           }
-        } catch {
-          onDone();
-        }
+        });
       });
-    });
+    } finally {
+      // Flush cookies/session to disk and ensure clean context state
+      await this.close();
+    }
   }
 
   /**

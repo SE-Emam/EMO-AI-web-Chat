@@ -209,6 +209,21 @@ describe('BrowserManager', () => {
       expect(page2).toBeDefined();
       expect(mockLauncher.launchPersistentContext).toHaveBeenCalledTimes(2);
     });
+
+    it('serializes concurrent getOrCreatePage calls to launch context only once', async () => {
+      const manager = new BrowserManager({ userDataDir: tempDir }, mockLauncher as any);
+
+      const [page1, page2, page3] = await Promise.all([
+        manager.getOrCreatePage(),
+        manager.getOrCreatePage(),
+        manager.getOrCreatePage(),
+      ]);
+
+      expect(page1).toBeDefined();
+      expect(page2).toBe(page1);
+      expect(page3).toBe(page1);
+      expect(mockLauncher.launchPersistentContext).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('launchLogin', () => {
@@ -233,6 +248,21 @@ describe('BrowserManager', () => {
       // Close the context to let launchLogin finish
       await manager.close();
       await loginPromise;
+      expect(manager.getContext()).toBeNull();
+    });
+
+    it('flushes and closes browser context cleanly in finally block when login finishes', async () => {
+      const manager = new BrowserManager({ userDataDir: tempDir }, mockLauncher as any);
+      const closeSpy = vi.spyOn(manager, 'close');
+
+      const loginPromise = manager.launchLogin();
+      await new Promise((r) => setTimeout(r, 10));
+
+      await manager.close();
+      await loginPromise;
+
+      expect(closeSpy).toHaveBeenCalled();
+      expect(manager.getContext()).toBeNull();
     });
 
     it('uses arenaBaseUrl as default url if targetUrl not provided', async () => {
