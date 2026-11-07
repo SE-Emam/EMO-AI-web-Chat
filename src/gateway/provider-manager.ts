@@ -2,7 +2,8 @@ import type { ArenaDriver, ChatMessage } from '../types.js';
 import type { GatewayConfigFile, ProviderConfig, ProviderRuntimeState, ProviderStatus, WebProviderId } from './types.js';
 import { WEB_PROVIDER_IDS } from './types.js';
 import type { GatewayConfigStore } from './config-store.js';
-import { ArenaDriver as ArenaBrowserDriver } from '../arena/driver.js';
+import { BrowserManager } from '../browser/manager.js';
+import { DefaultArenaDriver } from '../arena/driver.js';
 import { ZaiWebDriver } from '../arena/zai-web-driver.js';
 import { ClaudeWebDriver } from '../arena/claude-web-driver.js';
 import { TencentAiWebDriver } from '../arena/tencent-ai-web-driver.js';
@@ -15,11 +16,14 @@ const PROVIDER_META: Record<WebProviderId, { name: string; matches: (model: stri
   'arena-browser': {
     name: 'Arena Browser',
     matches: (_m) => true,
-    defaultFactory: (cfg) => new ArenaBrowserDriver({
-      userDataDir: String(cfg.settings.userDataDir || ''),
-      arenaBaseUrl: String(cfg.settings.baseUrl || 'https://arena.ai'),
-      headless: cfg.settings.headless !== false,
-    } as any),
+    defaultFactory: (cfg) => {
+      const browserManager = new BrowserManager({
+        userDataDir: String(cfg.settings.userDataDir || ''),
+        arenaBaseUrl: String(cfg.settings.baseUrl || 'https://arena.ai'),
+        headless: cfg.settings.headless !== false,
+      });
+      return new DefaultArenaDriver(browserManager);
+    },
   },
   'zai-web': {
     name: 'ZAI Web',
@@ -247,7 +251,7 @@ export class ProviderManager {
   private findProviderForModel(model: string): WebProviderId | undefined {
     const cleaned = model.trim().toLowerCase();
     // Prefer specific (non-catch-all) providers first.
-    const order = WEB_PROVIDER_IDS.filter((id) => id !== 'arena-browser').concat(['arena-browser']);
+    const order: WebProviderId[] = [...WEB_PROVIDER_IDS.filter((id) => id !== 'arena-browser'), 'arena-browser'];
     for (const id of order) {
       const cfg = this.providerConfig(id);
       if (!cfg?.enabled) continue;
