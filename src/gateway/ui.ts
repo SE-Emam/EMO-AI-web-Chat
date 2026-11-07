@@ -80,8 +80,8 @@ async function refresh(){
         <button data-act="toggle" data-id="\${esc(p.id)}" data-enabled="\${p.enabled?1:0}">\${p.enabled?'تعطيل':'تفعيل'}</button>
       </div>
       <h2>النماذج (المحدد فقط يعمل عبر /v1)</h2>
-      <div class="models">\${models.map(m=>\`<label class="model"><input type="checkbox" data-model="\${esc(m)}" data-id="\${esc(p.id)}" \${selected.has(m)?'checked':''}/> <span><code>\${esc(m)}</code></span></label>\`).join('')||'<small>لا توجد نماذج بعد. استخدم سحب النماذج أو أضف Model ID يدويًا.</small>'}</div>
-      <div class="row" style="margin-top:8px"><input type="text" placeholder="إضافة model id يدويًا" id="manual-\${esc(p.id)}"/><button data-act="add" data-id="\${esc(p.id)}">إضافة</button><button data-act="saveModels" data-id="\${esc(p.id)}">حفظ النماذج</button></div>
+      <div class="models">\${models.map(m=>\`<label class="model"><input type="checkbox" data-model="\${esc(m)}" data-id="\${esc(p.id)}" \${selected.has(m)?'checked':''}/> <span><code>\${esc(m)}</code></span></label>\`).join('')||'<small>لا توجد نماذج بعد. استخدم سحب النماذج بعد تسجيل الدخول/تشغيل المزود.</small>'}</div>
+      <div class="row" style="margin-top:8px"><button data-act="saveModels" data-id="\${esc(p.id)}">حفظ النماذج</button></div>
       <details style="margin-top:8px"><summary>إعدادات</summary><pre style="white-space:pre-wrap;font-size:12px;color:var(--muted)">\${esc(JSON.stringify(p.settings||{},null,2))}</pre></details>\`;
     root.appendChild(el);
   }
@@ -90,18 +90,7 @@ async function refresh(){
     try{
       if(act==='start'||act==='stop'||act==='refresh') await api('/api/gateway/providers/'+encodeURIComponent(id)+'/'+act,{method:'POST'});
       if(act==='toggle') await api('/api/gateway/providers/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({enabled: !(btn.dataset.enabled==='1')})});
-      if(act==='add'){
-        const inp=document.getElementById('manual-'+id);
-        const v=(inp?.value||'').trim();
-        if(!v){ alert('اكتب model id أولًا'); return; }
-        const card=btn.closest('.card');
-        const boxes=[...card.querySelectorAll('input[type=checkbox][data-model]')];
-        const selected=boxes.filter(b=>b.checked).map(b=>b.dataset.model);
-        const avail=[...new Set(boxes.map(b=>b.dataset.model).concat([v]))];
-        if(!selected.includes(v)) selected.push(v);
-        await api('/api/gateway/providers/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({availableModels:avail,selectedModels:selected})});
-        inp.value='';
-      }
+
       if(act==='saveModels'){ const card=btn.closest('.card'); const boxes=[...card.querySelectorAll('input[type=checkbox][data-model]')]; const selected=boxes.filter(b=>b.checked).map(b=>b.dataset.model); const avail=boxes.map(b=>b.dataset.model); await api('/api/gateway/providers/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({availableModels:avail,selectedModels:selected})}); }
       await refresh();
     }catch(e){ alert(e.message); }
