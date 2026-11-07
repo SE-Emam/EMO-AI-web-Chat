@@ -47,7 +47,14 @@ small{color:var(--muted)}
   <div id="providers" class="grid cards"></div>
 </div>
 <script>
-async function api(path, opts={}){ const r=await fetch(path,{headers:{'Content-Type':'application/json'},...opts}); const t=await r.text(); let d; try{d=JSON.parse(t)}catch{d={raw:t}}; if(!r.ok) throw new Error(d?.error?.message||d?.message||t||r.status); return d; }
+async function api(path, opts={}){
+  const headers = {...(opts.headers||{})};
+  if (opts.body != null && headers['Content-Type'] == null && headers['content-type'] == null) headers['Content-Type']='application/json';
+  const r=await fetch(path,{...opts,headers});
+  const t=await r.text(); let d; try{d=JSON.parse(t)}catch{d={raw:t}};
+  if(!r.ok) throw new Error(d?.error?.message||d?.message||t||r.status);
+  return d;
+}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function fmtMs(ms){ms=Math.max(0,ms||0); const s=Math.floor(ms/1000); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const sec=s%60; return h? h+'h '+m+'m '+sec+'s': m? m+'m '+sec+'s': sec+'s'}
 async function refresh(){
