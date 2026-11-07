@@ -45,11 +45,11 @@
 - Produces: `Config` object with `port`, `host`, `userDataDir`, `arenaBaseUrl`, `headless`.
 - Produces: TypeScript types for OpenAI request/response (`ChatCompletionRequest`, `ChatCompletionChunk`, `ModelInfo`).
 
-- [ ] **Step 1: Write the failing test for configuration loader**
-- [ ] **Step 2: Run test to verify it fails**
-- [ ] **Step 3: Implement `src/types.ts`, `src/config.ts`, `package.json`, `tsconfig.json`**
-- [ ] **Step 4: Run test to verify it passes**
-- [ ] **Step 5: Commit scaffolding**
+- [x] **Step 1: Write the failing test for configuration loader**
+- [x] **Step 2: Run test to verify it fails**
+- [x] **Step 3: Implement `src/types.ts`, `src/config.ts`, `package.json`, `tsconfig.json`**
+- [x] **Step 4: Run test to verify it passes**
+- [x] **Step 5: Commit scaffolding**
 
 ---
 

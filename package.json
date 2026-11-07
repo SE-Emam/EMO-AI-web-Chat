@@ -1,0 +1,37 @@
+{
+  "name": "arena-web-api",
+  "version": "0.1.0",
+  "description": "OpenAI-compatible Web-to-API bridge for Arena (arena.ai)",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "arena-webbridge": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "tsx src/cli.ts serve"
+  },
+  "keywords": [
+    "arena",
+    "openai",
+    "llm",
+    "bridge",
+    "fastify",
+    "playwright"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^13.1.0",
+    "fastify": "^5.2.1",
+    "playwright": "^1.50.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
