@@ -116,7 +116,7 @@ export interface ArenaDriver {
   sendMessage(
     model: string,
     messages: ChatMessage[],
-    onChunk: (chunk: string) => void,
+    onChunk?: (chunk: string) => void,
     signal?: AbortSignal
   ): Promise<string>;
   close?(): Promise<void>;

@@ -64,11 +64,11 @@
 - Produces: `formatChatCompletionResponse(id: string, model: string, fullContent: string): ChatCompletionResponse`
 - Produces: `formatModelList(models: string[]): ModelListResponse`
 
-- [ ] **Step 1: Write tests for chunk formatter, non-streaming formatter, and model list formatter**
-- [ ] **Step 2: Run tests to verify they fail**
-- [ ] **Step 3: Implement formatting functions in `src/server/openai-formatter.ts`**
-- [ ] **Step 4: Run tests to verify they pass**
-- [ ] **Step 5: Commit**
+- [x] **Step 1: Write tests for chunk formatter, non-streaming formatter, and model list formatter**
+- [x] **Step 2: Run tests to verify they fail**
+- [x] **Step 3: Implement formatting functions in `src/server/openai-formatter.ts`**
+- [x] **Step 4: Run tests to verify they pass**
+- [x] **Step 5: Commit**
 
 ---
 
@@ -82,11 +82,11 @@
 - Consumes: `openai-formatter.ts`, `Config`
 - Produces: `createServer(driver: ArenaDriver, config: Config): FastifyInstance`
 
-- [ ] **Step 1: Write server tests using a mock ArenaDriver (health, /v1/models, /v1/chat/completions with stream=false and stream=true)**
-- [ ] **Step 2: Run test to verify it fails**
-- [ ] **Step 3: Implement Fastify routes in `src/server/app.ts`**
-- [ ] **Step 4: Run test to verify it passes**
-- [ ] **Step 5: Commit**
+- [x] **Step 1: Write server tests using a mock ArenaDriver (health, /v1/models, /v1/chat/completions with stream=false and stream=true)**
+- [x] **Step 2: Run test to verify it fails**
+- [x] **Step 3: Implement Fastify routes in `src/server/app.ts`**
+- [x] **Step 4: Run test to verify it passes**
+- [x] **Step 5: Commit**
 
 ---
 
