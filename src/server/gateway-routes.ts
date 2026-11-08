@@ -20,6 +20,10 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
 
   app.get('/api/gateway/status', async () => {
     const cfg = opts.getGatewayConfig();
+    const providers = opts.manager.listStates().map((p) => ({
+      ...p,
+      settings: (() => { const { userDataDir: _ud, ...rest } = (p.settings || {}) as Record<string, unknown>; void _ud; return { ...rest, userDataDir: '[redacted]' }; })(),
+    }));
     return {
       gateway: {
         baseUriDisplay: cfg.gateway.baseUriDisplay,
@@ -28,7 +32,7 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
         port: cfg.gateway.port,
       },
       usage: opts.tracker.snapshot(),
-      providers: opts.manager.listStates(),
+      providers,
     };
   });
 

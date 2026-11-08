@@ -59,9 +59,9 @@ describe('gateway server auth/usage/management', () => {
   });
 
   it('heartbeat updates usage session and status returns gateway info', async () => {
-    let r = await fetch(`${base}/api/gateway/heartbeat`, { method: 'POST' });
+    let r = await fetch(`${base}/api/gateway/heartbeat`, { method: 'POST', headers: { Authorization: 'Bearer mac' } });
     expect(r.status).toBe(200);
-    r = await fetch(`${base}/api/gateway/status`);
+    r = await fetch(`${base}/api/gateway/status`, { headers: { Authorization: 'Bearer mac' } });
     expect(r.status).toBe(200);
     const data = await r.json();
     expect(data.gateway.baseUriDisplay).toBe('mac.ai/v1');

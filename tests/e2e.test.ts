@@ -99,7 +99,7 @@ describe('End-to-End HTTP Integration & Gateway Compatibility', () => {
       expect(res.status).toBe(204);
       expect(res.headers.get('access-control-allow-origin')).toBe('*');
       expect(res.headers.get('access-control-allow-methods')).toContain('POST');
-      expect(res.headers.get('access-control-allow-headers')).toBe('*');
+      expect(res.headers.get('access-control-allow-headers')).toContain('Authorization');
     });
 
     it('OPTIONS /v1/models handles CORS preflight with 204', async () => {

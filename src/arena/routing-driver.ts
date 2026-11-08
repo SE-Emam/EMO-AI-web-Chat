@@ -41,6 +41,7 @@ export class RoutingDriver implements ArenaDriver {
     onChunk?: (chunk: string) => void,
     signal?: AbortSignal
   ): Promise<string> {
+    if (signal?.aborted) throw new Error('Request was aborted');
     const cleaned = model.trim().toLowerCase();
     const candidates = this.routes.filter((r) => r.matches(cleaned));
 
@@ -57,9 +58,14 @@ export class RoutingDriver implements ArenaDriver {
           throw new Error('Request was aborted');
         }
         lastError = err;
+        const e = err as { statusCode?: number; message?: string };
         const msg = err instanceof Error ? err.message : String(err);
-        const nonRetryable = ABORT_NON_RETRYABLE.some((m) => msg === m);
-        if (nonRetryable) throw err;
+        const status = e?.statusCode;
+        // Fail-fast on non-retryable client/auth errors (4xx except 429) — do not mask them by failing over.
+        const isNonRetryableAuth = status === 401 || status === 403 || (status !== undefined && status >= 400 && status < 500 && status !== 429);
+        const isNonRetryableMsg = ABORT_NON_RETRYABLE.some((m) => msg === m)
+          || /Invalid or missing API key|authentication_error|Invalid request|messages.*required/i.test(msg);
+        if (isNonRetryableAuth || isNonRetryableMsg) throw err;
         console.log(
           `[RoutingDriver] ${route.name} failed for model ${model}: ${msg}. Trying next provider...`
         );

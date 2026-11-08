@@ -48,6 +48,97 @@ export const MODEL_ALIASES: Record<string, string> = {
   'o1-preview': 'o1',
 };
 
+export type ArenaMode = 'direct' | 'agent' | 'side-by-side';
+
+export interface ArenaTarget {
+  /** Arena UI mode / route family. */
+  mode: ArenaMode;
+  /** True when the caller used an explicit mode prefix (arena/..., direct:, agent:, side-by-side:). */
+  explicit: boolean;
+  /** Underlying model token for direct/agent, or primary model for side-by-side. */
+  model: string;
+  /** Resolved model tokens for side-by-side (A, B). */
+  models?: [string, string];
+  /** Original input. */
+  raw: string;
+  /**
+   * For direct mode: navigate to /text/direct?model=<id>. Only enabled for explicit
+   * namespaced targets so legacy plain model IDs keep the previous URL behavior/tests.
+   */
+  useModelParam: boolean;
+}
+
+function stripArenaNamespace(input: string): { mode: ArenaMode | null; rest: string; explicit: boolean } {
+  const raw = input.trim();
+  const lower = raw.toLowerCase();
+  const colonModes: Array<[string, ArenaMode]> = [
+    ['side-by-side:', 'side-by-side'],
+    ['side_by_side:', 'side-by-side'],
+    ['sbs:', 'side-by-side'],
+    ['agent:', 'agent'],
+    ['direct:', 'direct'],
+  ];
+  for (const [prefix, mode] of colonModes) {
+    if (lower.startsWith(prefix)) {
+      return { mode, rest: raw.slice(prefix.length), explicit: true };
+    }
+  }
+  // arena/<mode>/... or arena/<mode>?...
+  if (lower.startsWith('arena/')) {
+    const after = raw.slice('arena/'.length);
+    const m = after.match(/^(direct|agent|side-by-side|side_by_side|sbs)(?:[/?](.*))?$/i);
+    if (m) {
+      const modeToken = m[1].toLowerCase();
+      const mode: ArenaMode =
+        modeToken === 'agent' ? 'agent' : modeToken === 'direct' ? 'direct' : 'side-by-side';
+      return { mode, rest: (m[2] ?? '').trim(), explicit: true };
+    }
+    // arena/<model> treated as direct explicit
+    return { mode: 'direct', rest: after.trim(), explicit: true };
+  }
+  return { mode: null, rest: raw, explicit: false };
+}
+
+function parseSideBySideModels(rest: string): [string, string] | null {
+  const cleaned = rest.replace(/^\?model=/i, '').trim();
+  if (!cleaned) return null;
+  const sep = cleaned.includes('+') ? '+' : cleaned.includes('|') ? '|' : cleaned.includes(',') ? ',' : null;
+  if (!sep) return null;
+  const parts = cleaned.split(sep).map((p) => p.trim()).filter(Boolean);
+  if (parts.length >= 2) return [parts[0], parts[1]];
+  return null;
+}
+
+/**
+ * Parses an Arena target from a user/model string. Supports backward-compatible
+ * plain model IDs (direct mode) and explicit mode prefixes:
+ * - arena/direct/<model> or direct:<model>
+ * - arena/agent/<model> or agent:<model>
+ * - arena/side-by-side/<modelA>+<modelB> or side-by-side:<modelA>+<modelB>
+ */
+export function parseArenaTarget(model: string): ArenaTarget {
+  const raw = (model ?? '').toString();
+  const { mode: parsedMode, rest, explicit } = stripArenaNamespace(raw);
+  const mode = parsedMode ?? 'direct';
+
+  if (mode === 'side-by-side') {
+    const pair = parseSideBySideModels(rest);
+    if (!pair) {
+      return { mode, explicit, model: rest || 'auto', raw, useModelParam: false };
+    }
+    return { mode, explicit, model: pair[0], models: pair, raw, useModelParam: false };
+  }
+
+  const modelToken = rest.replace(/^\?model=/i, '').trim() || (explicit ? 'auto' : raw);
+  return {
+    mode,
+    explicit,
+    model: modelToken,
+    raw,
+    useModelParam: mode === 'direct' && explicit && !!rest.replace(/^\?model=/i, '').trim(),
+  };
+}
+
 /**
  * Resolves a user-provided model name or alias to the closest Arena canonical model ID.
  */

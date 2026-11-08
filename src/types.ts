@@ -26,6 +26,58 @@ export interface ZaiWebConfig {
 }
 
 /**
+ * Claude (claude.ai) web-session provider. Uses a dedicated persistent Chrome profile.
+ * Headed mode recommended for login/hCaptcha/Cloudflare challenges solved by the human.
+ */
+export interface ClaudeWebConfig {
+  enabled: boolean;
+  userDataDir: string;
+  baseUrl: string;
+  headless: boolean;
+  /** Max time to wait for one generation. */
+  timeoutMs: number;
+}
+
+/**
+ * Tencent AI Studio (aistudio.tencent.ai / Hy AI Studio) web-session provider.
+ * Uses a dedicated persistent Chrome profile. Headed mode recommended for login/verification.
+ */
+export interface TencentAiWebConfig {
+  enabled: boolean;
+  userDataDir: string;
+  baseUrl: string;
+  headless: boolean;
+  /** Max time to wait for one generation. */
+  timeoutMs: number;
+}
+
+/**
+ * Google Gemini (gemini.google.com) web-session provider.
+ * Uses a dedicated persistent Chrome profile. Headed mode recommended for Google login/verification.
+ */
+export interface GeminiWebConfig {
+  enabled: boolean;
+  userDataDir: string;
+  baseUrl: string;
+  headless: boolean;
+  /** Max time to wait for one generation. */
+  timeoutMs: number;
+}
+
+/**
+ * Qwen (chat.qwen.ai) web-session provider.
+ * Uses a dedicated persistent Chrome profile. Headed mode recommended for login/verification.
+ */
+export interface QwenWebConfig {
+  enabled: boolean;
+  userDataDir: string;
+  baseUrl: string;
+  headless: boolean;
+  /** Max time to wait for one generation. */
+  timeoutMs: number;
+}
+
+/**
  * Configuration for the Arena WebBridge service.
  */
 export interface Config {
@@ -38,6 +90,14 @@ export interface Config {
   zai?: ZaiConfig;
   /** Optional Z.AI web-session provider (chat.z.ai scraping via persistent Chrome). */
   zaiWeb?: ZaiWebConfig;
+  /** Optional Claude web-session provider (claude.ai scraping via persistent Chrome). */
+  claudeWeb?: ClaudeWebConfig;
+  /** Optional Tencent AI Studio web-session provider (aistudio.tencent.ai). */
+  tencentAiWeb?: TencentAiWebConfig;
+  /** Optional Gemini web-session provider (gemini.google.com). */
+  geminiWeb?: GeminiWebConfig;
+  /** Optional Qwen web-session provider (chat.qwen.ai). */
+  qwenWeb?: QwenWebConfig;
 }
 
 /**

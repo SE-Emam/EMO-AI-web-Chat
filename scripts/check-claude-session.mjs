@@ -1,0 +1,12 @@
+import { chromium } from 'playwright';
+import os from 'node:os'; import path from 'node:path';
+const profile = path.join(os.homedir(), '.arena-webbridge', 'claude-profile');
+const context = await chromium.launchPersistentContext(profile, { channel:'chrome', headless:false, viewport:{width:1280,height:900}, args:['--disable-blink-features=AutomationControlled'] });
+const page = context.pages()[0] || await context.newPage();
+await page.goto('https://claude.ai/new', { waitUntil:'domcontentloaded', timeout:60000 }).catch(()=>{});
+await page.waitForTimeout(4000);
+console.log('URL='+page.url());
+console.log('TITLE='+await page.title().catch(()=>'')); 
+console.log('TEXT='+((await page.evaluate(()=>document.body.innerText).catch(()=>''))||'').slice(0,500).replace(/\s+/g,' '));
+await page.screenshot({path:'/tmp/claude-session-check.png', fullPage:true}).catch(()=>{});
+await context.close();

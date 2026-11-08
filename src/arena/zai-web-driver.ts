@@ -22,13 +22,16 @@ export class ZaiWebDriver implements ArenaDriver {
   private readonly config: ZaiWebConfig;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
+  /** Serializes requests — a single browser page cannot serve concurrent chats. */
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(config: ZaiWebConfig) {
     this.config = config;
   }
 
   async listModels(): Promise<string[]> {
-    return ['glm-5.3-flash', 'glm-5.3-flashx'];
+    // Models exposed by chat.z.ai web UI (verified via model picker)
+    return ['glm-5.3-flash', 'glm-5.3', 'glm-5.2'];
   }
 
   async sendMessage(
@@ -37,10 +40,29 @@ export class ZaiWebDriver implements ArenaDriver {
     onChunk?: (chunk: string) => void,
     signal?: AbortSignal
   ): Promise<string> {
+    // Serialize: concurrent requests would fight over the same page/input.
+    const run = this.queue.then(() => this.sendMessageSerialized(model, messages, onChunk, signal));
+    this.queue = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
+  private async sendMessageSerialized(
+    model: string,
+    messages: ChatMessage[],
+    onChunk?: (chunk: string) => void,
+    signal?: AbortSignal
+  ): Promise<string> {
+    if (signal?.aborted) throw new Error('Request was aborted');
     const page = await this.ensurePage(signal);
 
     console.log(`[ZaiWeb] Preparing chat.z.ai for a new prompt...`);
     await this.prepareNewChat(page, signal);
+    await this.selectModel(page, model).catch((e: Error) =>
+      console.log(`[ZaiWeb] Model selection skipped (${model}): ${e.message}`)
+    );
 
     const prompt = formatMessages(messages);
     const input = page.locator('#chat-input').first();
@@ -54,11 +76,25 @@ export class ZaiWebDriver implements ArenaDriver {
       );
     }
     await input.click().catch(() => {});
-    // Type with a slight delay to keep interaction telemetry human-ish.
     await this.humanFill(page, input, prompt);
+    await page.waitForTimeout(250);
 
-    const send = page.locator('.sendMessageButton').first();
-    await send.click().catch(() => {});
+    // Confirm text landed in the input (Svelte-controlled inputs can ignore programmatic fills).
+    const inputValue = await this.readInputValue(page).catch(() => '');
+    if (!inputValue.includes(prompt.slice(0, Math.min(20, prompt.length)))) {
+      console.log(`[ZaiWeb] Input did not reflect prompt; retrying fill via keyboard...`);
+      await input.click({ clickCount: 3 }).catch(() => {});
+      await page.keyboard.press('Backspace').catch(() => {});
+      await page.keyboard.insertText(prompt).catch(() => input.fill(prompt).catch(() => {}));
+      await page.waitForTimeout(250);
+    }
+
+    const submitted = await this.submitPrompt(page);
+    if (!submitted) {
+      throw new Error(
+        'z.ai web chat: message could not be submitted (send button/Enter had no effect). Check the browser window.'
+      );
+    }
     console.log(`[ZaiWeb] Prompt submitted. Waiting for the assistant...`);
 
     let lastText = '';
@@ -241,25 +277,28 @@ export class ZaiWebDriver implements ArenaDriver {
   }
 
   /**
-   * Clicks into the box then types with small randomized delays. The final Enter
-   * is not used for submission (button click follows) to keep the flow explicit.
+   * Fills the prompt input reliably. For agent traffic (Hermes) prompts can be long;
+   * character-by-character typing is too slow and causes apparent hangs/timeouts.
+   * We prefer fast insertion and rely on post-fill verification + submit retries.
    */
   private async humanFill(page: Page, input: import('playwright').Locator, text: string): Promise<void> {
+    await input.click().catch(() => {});
     await input.fill('').catch(() => {});
-    if (this.config.headless) {
-      await input.fill(text).catch(() => {});
-      await page.waitForTimeout(300);
-      return;
+    // Fast path: insertText works well for large prompts and Svelte inputs in headed mode.
+    try {
+      await page.keyboard.insertText(text);
+    } catch {
+      try {
+        await input.fill(text);
+      } catch {
+        // Last resort: chunked type without per-keystroke delay
+        const step = Math.max(1, Math.floor(text.length / 20));
+        for (let i = 0; i < text.length; i += step) {
+          await input.type(text.slice(i, i + step)).catch(() => {});
+        }
+      }
     }
-    // Chunked typing: reasonably fast while producing real key events.
-    const step = Math.max(1, Math.floor(text.length / 40));
-    for (let i = 0; i < text.length; i += step) {
-      await input.type(text.slice(i, i + step), { delay: 20 }).catch(() => {
-        // Fallback: fill everything if typing fails midway
-        return input.fill(text);
-      });
-    }
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(200);
   }
 
   /**
@@ -337,6 +376,92 @@ export class ZaiWebDriver implements ArenaDriver {
     } catch {
       return false;
     }
+  }
+
+  /** Best-effort: pick the requested model from chat.z.ai's model picker. */
+  private async selectModel(page: Page, model: string): Promise<void> {
+    const labelMap: Record<string, string> = {
+      'glm-5.3-flash': 'GLM-5.3-Flash',
+      'glm-5.3': 'GLM-5.3',
+      'glm-5.2': 'GLM-5.2',
+    };
+    const want = labelMap[model.trim().toLowerCase()];
+    if (!want) return;
+
+    // If already selected, nothing to do.
+    const current = await page
+      .locator('button, div')
+      .filter({ hasText: /^GLM-5\.\d/ })
+      .first()
+      .innerText()
+      .catch(() => '');
+    if (current.replace(/\s+/g, ' ').trim().includes(want)) return;
+
+    // Open the model picker (current model indicator near the input area).
+    const trigger = page.locator(`text=${want}`).first();
+    if ((await trigger.count().catch(() => 0)) > 0) return; // somehow visible as selected
+    const opener = page.locator('text=/GLM-5\\.\\d/i').first();
+    await opener.click({ timeout: 4000 });
+    await page.waitForTimeout(700);
+
+    // Click the desired option in the opened list.
+    const option = page.locator('button, [role="menuitem"], [role="option"]').filter({ hasText: want }).first();
+    if ((await option.count().catch(() => 0)) === 0) {
+      await page.keyboard.press('Escape').catch(() => {});
+      throw new Error(`model option "${want}" not found`);
+    }
+    await option.click({ timeout: 4000 });
+    await page.waitForTimeout(500);
+  }
+
+  private async readInputValue(page: Page): Promise<string> {
+    return await page.evaluate(() => {
+      const el = document.querySelector('#chat-input') as
+        | HTMLTextAreaElement
+        | HTMLInputElement
+        | HTMLElement
+        | null;
+      if (!el) return '';
+      if ('value' in el && typeof (el as any).value === 'string') return (el as any).value as string;
+      return (el.innerText || el.textContent || '').toString();
+    });
+  }
+
+  private async assistantThreadCount(page: Page): Promise<number> {
+    return await page.locator(ASSISTANT_QUERY).count().catch(() => 0);
+  }
+
+  /** Submits the prompt via send button, retrying with Enter if needed. */
+  private async submitPrompt(page: Page): Promise<boolean> {
+    const beforeThreads = await this.assistantThreadCount(page);
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt === 0) {
+        const send = page.locator('.sendMessageButton').first();
+        await send.scrollIntoViewIfNeeded().catch(() => {});
+        await send.click({ force: false }).catch(() => send.click({ force: true }).catch(() => {}));
+      } else if (attempt === 1) {
+        await page.locator('#chat-input').first().click().catch(() => {});
+        await page.keyboard.press('Enter').catch(() => {});
+      } else {
+        await page.locator('#chat-input').first().click().catch(() => {});
+        await page.keyboard.press('Control+Enter').catch(() => page.keyboard.press('Meta+Enter').catch(() => {}));
+      }
+
+      // Evidence of submission: input cleared, generating state, or new assistant thread.
+      for (let i = 0; i < 20; i++) {
+        await page.waitForTimeout(350);
+        const val = await this.readInputValue(page).catch(() => 'x');
+        const cleared = !val || val.trim().length === 0;
+        const generating = await this.isGenerating(page);
+        const threads = await this.assistantThreadCount(page);
+        if (cleared || generating || threads > beforeThreads) {
+          return true;
+        }
+      }
+      console.log(`[ZaiWeb] Submit attempt ${attempt + 1} did not take effect; retrying...`);
+    }
+    return false;
   }
 
   private async isCaptchaBlocking(page: Page): Promise<boolean> {

@@ -50,6 +50,8 @@ small{color:var(--muted)}
 async function api(path, opts={}){
   const headers = {...(opts.headers||{})};
   if (opts.body != null && headers['Content-Type'] == null && headers['content-type'] == null) headers['Content-Type']='application/json';
+  const key = localStorage.getItem('emoApiKey') || 'mac';
+  if (!headers['Authorization'] && !headers['authorization'] && !headers['x-api-key']) headers['Authorization']='Bearer '+key;
   const r=await fetch(path,{...opts,headers});
   const t=await r.text(); let d; try{d=JSON.parse(t)}catch{d={raw:t}};
   if(!r.ok) throw new Error(d?.error?.message||d?.message||t||r.status);
@@ -62,6 +64,7 @@ async function refresh(){
   const st=await api('/api/gateway/status');
   document.getElementById('baseUri').textContent=st.gateway.baseUriDisplay;
   document.getElementById('apiKey').textContent=st.gateway.api;
+  try{ localStorage.setItem('emoApiKey', st.gateway.api); }catch{}
   document.getElementById('gwStatus').textContent='يعمل';
   document.getElementById('gwUptime').textContent=fmtMs(Date.now()-new Date(st.usage.gatewayStartedAt).getTime());
   const u=st.usage; document.getElementById('sActive').textContent=u.sessionActive?'نعم':'لا (تم التصفير/بانتظار heartbeat)';

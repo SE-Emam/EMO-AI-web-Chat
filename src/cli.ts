@@ -15,6 +15,10 @@ import { KNOWN_ARENA_MODELS } from './arena/models.js';
 import type { ArenaDriver, Config } from './types.js';
 import { ZAI_MODELS } from './arena/zai-models.js';
 import { ZaiWebDriver } from './arena/zai-web-driver.js';
+import { ClaudeWebDriver } from './arena/claude-web-driver.js';
+import { TencentAiWebDriver } from './arena/tencent-ai-web-driver.js';
+import { GeminiWebDriver } from './arena/gemini-web-driver.js';
+import { QwenWebDriver } from './arena/qwen-web-driver.js';
 
 export interface ProfileStatus {
   userDataDir: string;
@@ -177,9 +181,44 @@ export function createCli(services: CliServices = {}): Command {
         : new DefaultArenaDriver(browserManager as BrowserManager, config);
 
       // Provider chain (first match wins, failures fall back to the next):
+      //   claude-web:* / claudeai:* → claude.ai web session (if enabled) — explicit prefix avoids Arena claude-* conflict
+      //   tencent-ai:* / tencentai:* → aistudio.tencent.ai web session (if enabled)
+      //   gemini-web:* / geminiweb:* → gemini.google.com web session (if enabled) — explicit to avoid hijacking gemini-* API names
       //   glm-* → Z.AI REST API (if ZAI_API_KEY) → chat.z.ai web session (if enabled) → Arena browser
       //   else  → Arena browser directly
       const routes: DriverRoute[] = [];
+      if (config.claudeWeb?.enabled) {
+        console.log(`Claude web-session provider enabled (profile: ${config.claudeWeb.userDataDir}, headed=${!config.claudeWeb.headless}). Login/challenges are solved by you in the visible window. Use model prefix claude-web:<model> or claudeai:<model>.`);
+        routes.push({
+          name: 'claude-web',
+          driver: new ClaudeWebDriver(config.claudeWeb),
+          matches: (m) => m.startsWith('claude-web:') || m.startsWith('claudeai:'),
+        });
+      }
+      if (config.tencentAiWeb?.enabled) {
+        console.log(`Tencent AI Studio web-session provider enabled (profile: ${config.tencentAiWeb.userDataDir}, headed=${!config.tencentAiWeb.headless}). Login/verification solved by you in the visible window. Use model prefix tencent-ai:<model> or tencentai:<model>.`);
+        routes.push({
+          name: 'tencent-ai-web',
+          driver: new TencentAiWebDriver(config.tencentAiWeb),
+          matches: (m) => m.startsWith('tencent-ai:') || m.startsWith('tencentai:'),
+        });
+      }
+      if (config.geminiWeb?.enabled) {
+        console.log(`Gemini web-session provider enabled (profile: ${config.geminiWeb.userDataDir}, headed=${!config.geminiWeb.headless}). Google login/verification solved by you in the visible window. Use model prefix gemini-web:<model> or geminiweb:<model>.`);
+        routes.push({
+          name: 'gemini-web',
+          driver: new GeminiWebDriver(config.geminiWeb),
+          matches: (m) => m.startsWith('gemini-web:') || m.startsWith('geminiweb:'),
+        });
+      }
+      if (config.qwenWeb?.enabled) {
+        console.log(`Qwen web-session provider enabled (profile: ${config.qwenWeb.userDataDir}, headed=${!config.qwenWeb.headless}). Login/verification solved by you in the visible window. Use model prefix qwen-web:<model> or qwenweb:<model>.`);
+        routes.push({
+          name: 'qwen-web',
+          driver: new QwenWebDriver(config.qwenWeb),
+          matches: (m) => m.startsWith('qwen-web:') || m.startsWith('qwenweb:'),
+        });
+      }
       if (config.zai) {
         console.log(`Z.AI REST provider enabled (default: ${config.zai.defaultModel}). glm-* requests go direct to api.z.ai.`);
         routes.push({ name: 'zai-api', driver: new ZaiDriver(config.zai), matches: (m) => m.startsWith('glm-') });
@@ -196,7 +235,10 @@ export function createCli(services: CliServices = {}): Command {
         ? services.serverFactory(driver, config)
         : createServer(driver, config);
 
+      let cleaningUp = false;
       const cleanup = async () => {
+        if (cleaningUp) return;
+        cleaningUp = true;
         try {
           await app.close();
         } catch {}
@@ -205,6 +247,7 @@ export function createCli(services: CliServices = {}): Command {
             await driver.close();
           }
         } catch {}
+        process.exit(0);
       };
 
       process.once('SIGINT', cleanup);

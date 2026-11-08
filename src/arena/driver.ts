@@ -8,6 +8,7 @@ import {
   KNOWN_ARENA_MODELS,
   resolveModelAlias,
   formatMessages,
+  parseArenaTarget,
 } from './models.js';
 
 /**
@@ -16,6 +17,8 @@ import {
 export class DefaultArenaDriver implements ArenaDriver {
   private browserManager: BrowserManager;
   private config: Config;
+  /** Serializes requests — Arena uses a shared browser page/session. */
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(browserManager: BrowserManager, config?: Partial<Config>) {
     this.browserManager = browserManager;
@@ -38,75 +41,114 @@ export class DefaultArenaDriver implements ArenaDriver {
     onChunk?: (chunk: string) => void,
     signal?: AbortSignal
   ): Promise<string> {
+    const run = this.queue.then(() =>
+      this.sendMessageSerialized(model, messages, onChunk, signal)
+    );
+    this.queue = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
+  private async sendMessageSerialized(
+    model: string,
+    messages: ChatMessage[],
+    onChunk?: (chunk: string) => void,
+    signal?: AbortSignal
+  ): Promise<string> {
     if (signal?.aborted) {
       throw new Error('Request was aborted');
     }
 
     console.log(`[ArenaDriver] Starting sendMessage with model: ${model}`);
-    const resolvedModel = resolveModelAlias(model);
+    const target = parseArenaTarget(model);
     const prompt = formatMessages(messages);
+
+    if (target.mode === 'side-by-side') {
+      throw new Error(
+        `Arena mode "side-by-side" has been disabled in this bridge (dual-response extraction was unreliable). Use a direct model (e.g. claude-3-7-sonnet or arena/direct/<model>) or agent:<model>.`
+      );
+    }
+
+    if (target.mode === 'agent') {
+      return this.runArenaTarget({
+        targetMode: 'agent',
+        url: `${this.config.arenaBaseUrl}/agent`,
+        prompt,
+        onChunk,
+        signal,
+      });
+    }
+
+    const modelToken = target.model;
+    const resolvedModel = resolveModelAlias(modelToken);
+    let directChatUrl = `${this.config.arenaBaseUrl}/text/direct`;
+    if (target.useModelParam) {
+      directChatUrl = `${directChatUrl}?model=${encodeURIComponent(resolvedModel)}`;
+    }
+    const shouldSelectModel =
+      modelToken &&
+      modelToken !== 'auto' &&
+      modelToken !== 'default' &&
+      resolvedModel !== DEFAULT_MODEL;
+    return this.runArenaTarget({
+      targetMode: 'direct',
+      url: directChatUrl,
+      prompt,
+      resolvedModel: shouldSelectModel ? resolvedModel : undefined,
+      onChunk,
+      signal,
+    });
+  }
+
+  private async runArenaTarget(opts: {
+    targetMode: 'direct' | 'agent' | 'side-by-side';
+    url: string;
+    prompt: string;
+    resolvedModel?: string;
+    modelLabels?: [string, string];
+    onChunk?: (chunk: string) => void;
+    signal?: AbortSignal;
+  }): Promise<string> {
     console.log(`[ArenaDriver] Getting page...`);
     const page = await this.browserManager.getOrCreatePage();
     console.log(`[ArenaDriver] Page URL is: ${page.url ? page.url() : ''}`);
 
-    // Check for Cloudflare challenge before doing anything
     await this.checkCloudflare(page);
 
-    // Ensure we are on a clean direct chat page
-    const directChatUrl = `${this.config.arenaBaseUrl}/text/direct`;
-    console.log(`[ArenaDriver] Preparing direct chat page...`);
-    await page.goto(directChatUrl, { waitUntil: 'commit' }).catch((e) =>
+    console.log(`[ArenaDriver] Preparing ${opts.targetMode} page: ${opts.url}`);
+    await page.goto(opts.url, { waitUntil: 'commit' }).catch((e) =>
       console.log('[ArenaDriver] goto error:', e.message)
     );
     await this.waitForPageReady(page);
-
-    // Check for Cloudflare challenge after navigation
     await this.checkCloudflare(page);
-
-    // Dismiss terms of use / privacy modal if present
     await this.dismissTermsModal(page);
 
-    // Switch to Direct Chat tab if visible
-    await this.switchToDirectChatTab(page);
-
-    // Select model only if explicitly requested (not auto/default)
-    if (
-      model &&
-      model !== 'auto' &&
-      model !== 'default' &&
-      resolvedModel !== DEFAULT_MODEL
-    ) {
-      console.log(`[ArenaDriver] Selecting model: ${resolvedModel}`);
-      await this.selectModel(page, resolvedModel);
+    if (opts.targetMode === 'direct') {
+      await this.switchToDirectChatTab(page);
+      if (opts.resolvedModel) {
+        console.log(`[ArenaDriver] Selecting model: ${opts.resolvedModel}`);
+        await this.selectModel(page, opts.resolvedModel);
+      }
     }
 
-    // Wait for prompt input to be visible and ready
     console.log(`[ArenaDriver] Finding prompt input...`);
     const inputLoc = await this.findPromptInput(page);
-    await inputLoc.waitFor?.({ state: 'visible', timeout: 10000 }).catch(() => {});
-    if (page.waitForTimeout) {
-      await page.waitForTimeout(1000);
-    }
+    await inputLoc.waitFor?.({ state: 'visible', timeout: 15000 }).catch(() => {});
+    if (page.waitForTimeout) await page.waitForTimeout(800);
 
-    await inputLoc.click?.().catch(() => {});
-    await inputLoc.fill(prompt);
-    if (page.waitForTimeout) {
-      await page.waitForTimeout(300);
-    }
+    await this.fillPromptInput(page, inputLoc, opts.prompt);
+    if (page.waitForTimeout) await page.waitForTimeout(300);
     console.log(`[ArenaDriver] Filled prompt. Finding send button...`);
 
-    // Click send button
     const sendLoc = await this.findSendButton(page);
     let sent = false;
     const isEnabled =
       typeof sendLoc?.isEnabled === 'function'
         ? await sendLoc.isEnabled().catch(() => false)
         : true;
-    if (
-      sendLoc &&
-      (await sendLoc.isVisible().catch(() => false)) &&
-      isEnabled
-    ) {
+    if (sendLoc && (await sendLoc.isVisible().catch(() => false)) && isEnabled) {
       console.log(`[ArenaDriver] Clicking send button...`);
       await sendLoc.click().catch((e) => console.log('[ArenaDriver] click send error:', e.message));
       sent = true;
@@ -114,15 +156,16 @@ export class DefaultArenaDriver implements ArenaDriver {
     if (!sent) {
       console.log(`[ArenaDriver] Pressing enter on prompt input...`);
       await inputLoc.press?.('Enter').catch(() => {});
+      await page.keyboard?.press?.('Enter').catch(() => {});
     }
 
-    // If terms modal popped up after clicking send, dismiss and retry send
     await this.dismissTermsModal(page);
-
-    await page.screenshot?.({ path: '/tmp/arena-driver-state.png' }).catch(() => {});
-    console.log(`[ArenaDriver] Saved screenshot to /tmp/arena-driver-state.png. Entering streamResponse...`);
-    // Stream response until generation completes or abort is signaled
-    return this.streamResponse(page, onChunk, signal);
+    if (process.env.ARENA_DEBUG === '1') {
+      console.log('[ArenaDriver] ARENA_DEBUG=1 — screenshot capture enabled');
+      await page.screenshot?.({ path: '/tmp/arena-driver-state.png' }).catch(() => {});
+    }
+    console.log(`[ArenaDriver] Entering streamResponse...`);
+    return this.streamResponse(page, opts.targetMode, opts.prompt, opts.modelLabels, opts.onChunk, opts.signal);
   }
 
   /**
@@ -340,7 +383,94 @@ export class DefaultArenaDriver implements ArenaDriver {
     return false;
   }
 
-  private async getLatestBotText(page: Page): Promise<string> {
+  private async fillPromptInput(page: Page, inputLoc: Locator, prompt: string): Promise<void> {
+    await inputLoc.click?.().catch(() => {});
+    // Textareas
+    try {
+      const tag = await inputLoc.evaluate?.((el: any) => (el && el.tagName ? el.tagName.toLowerCase() : ''));
+      const editable = await inputLoc.evaluate?.((el: any) => !!(el && el.isContentEditable));
+      if (tag === 'textarea' || tag === 'input') {
+        await inputLoc.fill?.(prompt);
+        return;
+      }
+      if (editable) {
+        await page.keyboard?.press?.(process.platform === 'darwin' ? 'Meta+A' : 'Control+A').catch(() => {});
+        await page.keyboard?.press?.('Backspace').catch(() => {});
+        await page.keyboard?.type?.(prompt, { delay: 5 } as any).catch(async () => {
+          await inputLoc.evaluate?.((el: any, text: string) => {
+            el.focus?.();
+            if (el.isContentEditable) {
+              document.execCommand?.('selectAll', false);
+              document.execCommand?.('insertText', false, text);
+              if (!(el.innerText || el.textContent || '').includes(text.slice(0, 20))) el.textContent = text;
+            }
+          }, prompt).catch(() => {});
+        });
+        return;
+      }
+    } catch {
+      // fall through
+    }
+    await inputLoc.fill?.(prompt).catch(async () => {
+      await page.keyboard?.type?.(prompt, { delay: 5 } as any).catch(() => {});
+    });
+  }
+
+  private normalizeText(t: string): string {
+    return (t || '').replace(/\s+/g, ' ').trim();
+  }
+
+  private async getAssistantTexts(
+    page: Page,
+    targetMode: 'direct' | 'agent' | 'side-by-side',
+    prompt: string
+  ): Promise<string[]> {
+    const promptNorm = this.normalizeText(prompt).slice(0, 400);
+    try {
+      const texts = await page.evaluate?.((args: any) => {
+        const { targetMode, promptNorm } = args || {};
+        const norm = (s: string) => (s || '').replace(/\s+/g, ' ').trim();
+        const p = norm(promptNorm || '');
+        const els = Array.from(
+          document.querySelectorAll('.prose, [data-message-author-role="assistant"], [data-testid="bot"], .bot-message')
+        );
+        const out: string[] = [];
+        for (const el of els as HTMLElement[]) {
+          if (el.closest('.bg-surface-raised')) continue;
+          if (el.closest('.user-message')) continue;
+          if (el.closest('[data-testid="user"]')) continue;
+          if (el.closest('.not-prose')) continue;
+          const t = norm(el.innerText || el.textContent || '');
+          if (!t) continue;
+          if (p && (t === p || t.startsWith(p) || p.startsWith(t))) continue;
+          // Avoid echoing the full multi-turn prompt in agent/direct
+          if (p && p.length > 40 && t.length > 40 && p.includes(t)) continue;
+          out.push(t);
+        }
+        if (targetMode === 'side-by-side') {
+          // return last two distinct non-empty assistant blocks
+          const uniq: string[] = [];
+          for (const t of out) if (!uniq.includes(t)) uniq.push(t);
+          return uniq.slice(-2);
+        }
+        if (targetMode === 'agent') {
+          const uniq: string[] = [];
+          for (const t of out) if (!uniq.includes(t)) uniq.push(t);
+          return uniq.length ? [uniq[uniq.length - 1]] : [];
+        }
+        return out.length ? [out[out.length - 1]] : [];
+      }, { targetMode, promptNorm });
+      if (Array.isArray(texts)) return texts.filter(Boolean);
+    } catch {
+      // fallback
+    }
+
+    // Locator fallback - single latest (keeps existing behavior for tests/mocks)
+    const latest = await this.getLatestBotTextLegacy(page);
+    return latest ? [latest] : [];
+  }
+
+  private async getLatestBotTextLegacy(page: Page): Promise<string> {
     try {
       const text = await page.evaluate?.(() => {
         if (typeof document === 'undefined') return undefined;
@@ -360,13 +490,8 @@ export class DefaultArenaDriver implements ArenaDriver {
         }
         return '';
       });
-      if (typeof text === 'string') {
-        return text;
-      }
-    } catch {
-      // Continue to locator fallback (for unit tests where evaluate throws or is not configured)
-    }
-
+      if (typeof text === 'string') return text;
+    } catch {}
     for (const sel of ARENA_SELECTORS.botMessage) {
       try {
         const loc = page.locator(sel);
@@ -379,27 +504,26 @@ export class DefaultArenaDriver implements ArenaDriver {
                 ? loc.first()
                 : loc;
           const text = (await last.innerText().catch(() => '')) || '';
-          if (text) {
-            return text;
-          }
+          if (text) return text;
         }
-      } catch {
-        // Continue searching
-      }
+      } catch {}
     }
     return '';
   }
 
   private async streamResponse(
     page: Page,
+    targetMode: 'direct' | 'agent' | 'side-by-side' = 'direct',
+    prompt = '',
+    modelLabels?: [string, string],
     onChunk?: (chunk: string) => void,
     signal?: AbortSignal
   ): Promise<string> {
-    let lastLength = 0;
-    let accumulatedText = '';
+    let lastText = '';
     let sawGenerating = false;
     let stablePollCount = 0;
-    const maxPolls = 600; // ~60 seconds timeout (at 100ms interval)
+    // ~120ms per poll: direct/SBS ~84s, agent ~6 min for longer multi-step runs.
+    const maxPolls = targetMode === 'agent' ? 3000 : 700;
 
     for (let poll = 0; poll < maxPolls; poll++) {
       if (signal?.aborted) {
@@ -411,42 +535,55 @@ export class DefaultArenaDriver implements ArenaDriver {
       await this.checkCloudflare(page);
 
       const generating = await this.isGenerating(page);
-      const currentText = await this.getLatestBotText(page);
-      if (poll % 10 === 0) {
-        console.log(`[ArenaDriver] poll ${poll}: generating=${generating}, sawGenerating=${sawGenerating}, currentText="${currentText}", accum="${accumulatedText}", stable=${stablePollCount}`);
-      }
-      if (generating || currentText.length > 0) {
-        sawGenerating = true;
-      }
+      const texts = await this.getAssistantTexts(page, targetMode, prompt);
+      const currentText =
+        targetMode === 'side-by-side'
+          ? (texts.length >= 2
+              ? `[A: ${modelLabels?.[0] || 'model-a'}]\n${texts[0]}\n\n[B: ${modelLabels?.[1] || 'model-b'}]\n${texts[1]}`
+              : texts.length === 1
+                ? `[A: ${modelLabels?.[0] || 'model-a'}]\n${texts[0]}\n\n[B: ${modelLabels?.[1] || 'model-b'}]\n(waiting for response...)`
+                : '')
+          : (texts[0] || '');
 
-      if (currentText.length > lastLength) {
-        const delta = currentText.slice(lastLength);
-        lastLength = currentText.length;
-        accumulatedText = currentText;
+      if (poll % 10 === 0) {
+        console.log(`[ArenaDriver] poll ${poll} mode=${targetMode}: generating=${generating}, sawGenerating=${sawGenerating}, parts=${texts.length}, currentText="${currentText.slice(0, 80)}", stable=${stablePollCount}`);
+      }
+      if (generating || currentText.length > 0) sawGenerating = true;
+
+      if (currentText.length > lastText.length && currentText.startsWith(lastText)) {
+        const delta = currentText.slice(lastText.length);
+        lastText = currentText;
         stablePollCount = 0;
         onChunk?.(delta);
-      } else if (accumulatedText.length > 0) {
+      } else if (currentText !== lastText && currentText.length > 0) {
+        // non-monotonic change (common in SBS/agent) - emit full snapshot delta if streaming, but keep simple
+        lastText = currentText;
+        stablePollCount = 0;
+      } else if (currentText.length > 0) {
         stablePollCount++;
       }
 
-      // Generation is done if:
-      // 1. Text is accumulated, no stop button is active, and text has been stable for 5 polls (500ms)
-      // 2. OR text has been stable for >= 15 polls (1.5s)
+      const sbsReady = targetMode === 'side-by-side' ? texts.length >= 2 : true;
       if (
-        (accumulatedText.length > 0 && !generating && stablePollCount >= 5) ||
-        (accumulatedText.length > 0 && stablePollCount >= 15)
+        (currentText.length > 0 && sbsReady && !generating && stablePollCount >= 6) ||
+        (currentText.length > 0 && sbsReady && stablePollCount >= 18)
       ) {
-        console.log(`[ArenaDriver] Generation completed! Returning accumulated text (${accumulatedText.length} chars)`);
-        break;
+        console.log(`[ArenaDriver] Generation completed! mode=${targetMode} parts=${texts.length} chars=${currentText.length}`);
+        // If we never streamed chunks (snapshot mode) emit once
+        if (onChunk && lastText === '' && currentText) onChunk(currentText);
+        return currentText;
       }
 
-      if (page.waitForTimeout) {
-        await page.waitForTimeout(100);
-      } else {
-        await new Promise((r) => setTimeout(r, 100));
-      }
+      if (page.waitForTimeout) await page.waitForTimeout(120);
+      else await new Promise((r) => setTimeout(r, 120));
     }
 
-    return accumulatedText;
+    // timeout: return best effort
+    const texts = await this.getAssistantTexts(page, targetMode, prompt).catch(() => [] as string[]);
+    if (targetMode === 'side-by-side') {
+      if (texts.length >= 2) return `[A: ${modelLabels?.[0] || 'model-a'}]\n${texts[0]}\n\n[B: ${modelLabels?.[1] || 'model-b'}]\n${texts[1]}`;
+      if (texts.length === 1) return `[A: ${modelLabels?.[0] || 'model-a'}]\n${texts[0]}\n\n[B: ${modelLabels?.[1] || 'model-b'}]\n(no response captured)`;
+    }
+    return texts[0] || '';
   }
 }

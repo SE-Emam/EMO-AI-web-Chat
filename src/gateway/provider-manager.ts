@@ -168,9 +168,41 @@ export class ProviderManager {
   async updateProvider(id: WebProviderId, patch: { enabled?: boolean; settings?: Record<string, unknown>; selectedModels?: string[]; availableModels?: string[] }): Promise<ProviderRuntimeState> {
     const cfg = this.providerConfig(id);
     if (patch.enabled != null) cfg.enabled = patch.enabled;
-    if (patch.settings) cfg.settings = { ...(cfg.settings || {}), ...patch.settings };
-    if (patch.selectedModels) cfg.selectedModels = uniq(patch.selectedModels);
-    if (patch.availableModels) cfg.availableModels = uniq(patch.availableModels);
+    if (patch.settings) {
+      const ALLOWED = new Set(['baseUrl', 'userDataDir', 'headless', 'timeoutMs', 'captchaWaitMs']);
+      const filtered: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(patch.settings)) {
+        if (!ALLOWED.has(k)) continue;
+        if (v == null) continue;
+        const s = typeof v === 'string' ? v.slice(0, 1024) : v;
+        if (k === 'baseUrl') {
+          const str = String(s);
+          try {
+            const u = new URL(str);
+            if (u.protocol !== 'https:' && !(u.protocol === 'http:' && /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?/.test(u.origin))) continue;
+          } catch { continue; }
+          filtered[k] = str.replace(/\/$/, '');
+        } else if (k === 'userDataDir') {
+          const str = String(s);
+          const home = (process.env.HOME || '');
+          const canonical = str.startsWith('~/') && home ? home + str.slice(1) : str;
+          const expectedPrefix = home ? home + '/.arena-webbridge/' : '/.arena-webbridge/';
+          if (canonical !== expectedPrefix.replace(/\/$/, '') && !canonical.startsWith(expectedPrefix)) continue;
+          filtered[k] = canonical;
+        } else if (k === 'timeoutMs' || k === 'captchaWaitMs') {
+          const n = Number(s);
+          if (!Number.isFinite(n)) continue;
+          filtered[k] = Math.min(600_000, Math.max(1_000, n));
+        } else if (k === 'headless') {
+          filtered[k] = !!s;
+        } else {
+          filtered[k] = s;
+        }
+      }
+      cfg.settings = { ...(cfg.settings || {}), ...filtered };
+    }
+    if (patch.selectedModels) cfg.selectedModels = uniq(patch.selectedModels.map(String).map((s) => s.slice(0, 128))).slice(0, 500);
+    if (patch.availableModels) cfg.availableModels = uniq(patch.availableModels.map(String).map((s) => s.slice(0, 128))).slice(0, 500);
     return this.getState(id);
   }
 

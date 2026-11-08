@@ -45,7 +45,10 @@ async function main() {
   if (open && process.platform === 'darwin') {
     spawn('open', [uiUrl], { stdio: 'ignore', detached: true }).unref();
   }
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log('\nStopping EMO.ai gateway...');
     await manager.close().catch(() => {});
     await app.close().catch(() => {});

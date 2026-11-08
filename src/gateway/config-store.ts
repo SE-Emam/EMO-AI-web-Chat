@@ -135,7 +135,8 @@ export class GatewayConfigStore {
   }
 
   async save(config: GatewayConfigFile): Promise<void> {
-    await fs.mkdir(path.dirname(this.path), { recursive: true });
+    await fs.mkdir(path.dirname(this.path), { recursive: true, mode: 0o700 });
+    try { await fs.chmod(path.dirname(this.path), 0o700); } catch {}
     const tmp = `${this.path}.${process.pid}.${Date.now()}.tmp`;
     const data = JSON.stringify({
       version: 1,
@@ -143,7 +144,9 @@ export class GatewayConfigStore {
       ui: config.ui,
       providers: config.providers,
     }, null, 2);
-    await fs.writeFile(tmp, data, 'utf8');
+    await fs.writeFile(tmp, data, { encoding: 'utf8', mode: 0o600 });
+    try { await fs.chmod(tmp, 0o600); } catch {}
     await fs.rename(tmp, this.path);
+    try { await fs.chmod(this.path, 0o600); } catch {}
   }
 }

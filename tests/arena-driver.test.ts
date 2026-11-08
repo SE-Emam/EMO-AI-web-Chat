@@ -4,6 +4,7 @@ import {
   DefaultArenaDriver,
   resolveModelAlias,
   formatMessages,
+  parseArenaTarget,
   KNOWN_ARENA_MODELS,
   DEFAULT_MODEL,
   ARENA_SELECTORS,
@@ -146,6 +147,44 @@ describe('Arena Models & Aliases', () => {
       expect(KNOWN_ARENA_MODELS).toContain('deepseek-r1');
       expect(KNOWN_ARENA_MODELS).toContain('gemini-2.0-flash');
       expect(KNOWN_ARENA_MODELS).toContain('qwen-2.5-max');
+    });
+  });
+
+  describe('parseArenaTarget', () => {
+    it('treats plain model names as implicit direct (backward compatible)', () => {
+      const t = parseArenaTarget('claude-3-7-sonnet');
+      expect(t.mode).toBe('direct');
+      expect(t.explicit).toBe(false);
+      expect(t.model).toBe('claude-3-7-sonnet');
+      expect(t.useModelParam).toBe(false);
+    });
+
+    it('parses explicit direct prefixes and enables ?model= URL', () => {
+      expect(parseArenaTarget('direct:claude-3-7-sonnet')).toMatchObject({
+        mode: 'direct',
+        explicit: true,
+        model: 'claude-3-7-sonnet',
+        useModelParam: true,
+      });
+      expect(parseArenaTarget('arena/direct/gpt-4o')).toMatchObject({
+        mode: 'direct',
+        explicit: true,
+        model: 'gpt-4o',
+        useModelParam: true,
+      });
+    });
+
+    it('parses agent and side-by-side modes', () => {
+      expect(parseArenaTarget('agent:claude-3-7-sonnet')).toMatchObject({
+        mode: 'agent',
+        explicit: true,
+        model: 'claude-3-7-sonnet',
+      });
+      expect(parseArenaTarget('arena/side-by-side/claude-3-7-sonnet+gpt-4o')).toMatchObject({
+        mode: 'side-by-side',
+        explicit: true,
+        models: ['claude-3-7-sonnet', 'gpt-4o'],
+      });
     });
   });
 });
@@ -514,6 +553,62 @@ describe('DefaultArenaDriver', () => {
       expect(filledPrompt).toBe(
         'System: You are an assistant.\n\nUser: Ping\n\nAssistant: Pong\n\nUser: Score?'
       );
+    });
+
+    it('uses /text/direct?model= for explicit direct mode targets', async () => {
+      fakePage.setLocator(
+        ARENA_SELECTORS.promptInput[0],
+        createMockLocator({ count: 1, visible: true })
+      );
+      fakePage.setLocator(
+        ARENA_SELECTORS.sendButton[0],
+        createMockLocator({ count: 1, visible: true })
+      );
+      fakePage.setLocator(
+        ARENA_SELECTORS.modelDropdown[0],
+        createMockLocator({ count: 1, visible: true })
+      );
+      fakePage.setLocator(
+        ARENA_SELECTORS.dropdownOption('gpt-4o')[0],
+        createMockLocator({ count: 1, visible: true })
+      );
+      const botLocator: Partial<Locator> = {
+        count: vi.fn().mockResolvedValue(1),
+        isVisible: vi.fn().mockResolvedValue(true),
+        first: vi.fn().mockImplementation(() => botLocator as Locator),
+        nth: vi.fn().mockImplementation(() => botLocator as Locator),
+        innerText: vi.fn().mockResolvedValue('ok'),
+      };
+      fakePage.setLocator(ARENA_SELECTORS.botMessage[0], botLocator as unknown as Locator);
+      fakePage.setLocator(ARENA_SELECTORS.stopButton[0], createMockLocator({ count: 0, visible: false }));
+
+      const res = await driver.sendMessage('arena/direct/gpt-4o', [{ role: 'user', content: 'Hi' }]);
+      expect(fakePage.gotoCalledWith).toBe('https://arena.ai/text/direct?model=gpt-4o');
+      expect(res).toBe('ok');
+    });
+
+    it('navigates to /agent for agent mode targets (best-effort)', async () => {
+      fakePage.setLocator(ARENA_SELECTORS.promptInput[0], createMockLocator({ count: 1, visible: true }));
+      fakePage.setLocator(ARENA_SELECTORS.sendButton[0], createMockLocator({ count: 1, visible: true }));
+      fakePage.setLocator(ARENA_SELECTORS.stopButton[0], createMockLocator({ count: 0, visible: false }));
+      const botLocator: Partial<Locator> = {
+        count: vi.fn().mockResolvedValue(1),
+        isVisible: vi.fn().mockResolvedValue(true),
+        first: vi.fn().mockImplementation(() => botLocator as Locator),
+        nth: vi.fn().mockImplementation(() => botLocator as Locator),
+        innerText: vi.fn().mockResolvedValue('agent-ok'),
+      };
+      fakePage.setLocator(ARENA_SELECTORS.botMessage[0], botLocator as unknown as Locator);
+      const res = await driver.sendMessage('agent:claude-3-7-sonnet', [{ role: 'user', content: 'Hi' }]);
+      expect(fakePage.gotoCalledWith).toBe('https://arena.ai/agent');
+      expect(res).toContain('agent-ok');
+    });
+
+    it('rejects side-by-side mode (disabled)', async () => {
+      await expect(
+        driver.sendMessage('arena/side-by-side/claude-3-7-sonnet+gpt-4o', [{ role: 'user', content: 'Hi' }])
+      ).rejects.toThrow(/side-by-side.*disabled/i);
+      expect(mockBrowserManager.getOrCreatePage).not.toHaveBeenCalled();
     });
   });
 

@@ -59,19 +59,39 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
   const requireApiKey = gatewayMode ? !!gateway!.gatewayConfig.gateway.requireApiKey : false;
   const apiKey = gatewayMode ? String(gateway!.gatewayConfig.gateway.apiKey || 'mac') : '';
 
-  const app = Fastify({ logger: false });
+  const app = Fastify({ logger: false, bodyLimit: 2_500_000 });
 
   app.addHook('onRequest', async (request, reply) => {
+    const url = request.raw.url || '';
+    const isMgmtOrUi = url.startsWith('/api/gateway/') || url === '/' || url === '/ui' || url.startsWith('/ui?');
+    if (isMgmtOrUi) {
+      // No wildcard CORS for management/UI — prevent any website from reading localhost state (defense-in-depth against DNS-rebinding/CSRF).
+      const origin = request.headers.origin;
+      if (origin) {
+        const allowed = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(origin) || origin === 'null';
+        if (allowed) reply.header('Access-Control-Allow-Origin', origin);
+      }
+      reply.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
+      reply.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Requested-With');
+      reply.header('X-Frame-Options', 'SAMEORIGIN');
+      reply.header('Referrer-Policy', 'no-referrer');
+      reply.header('Cache-Control', 'no-store');
+      reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'");
+      if (request.method === 'OPTIONS') return reply.status(204).send();
+      return;
+    }
     reply.header('Access-Control-Allow-Origin', '*');
     reply.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
-    reply.header('Access-Control-Allow-Headers', '*');
+    reply.header('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     if (request.method === 'OPTIONS') return reply.status(204).send();
   });
 
   if (requireApiKey) {
     app.addHook('onRequest', async (request, reply) => {
       const url = request.raw.url || '';
-      if (!url.startsWith('/v1/')) return;
+      // Protect /v1/* and management API /api/gateway/* — UI and / are only for local display.
+      // Allow /health and / without auth (health probes and the management UI shell).
+      if (!url.startsWith('/v1/') && !url.startsWith('/api/gateway/')) return;
       const provided = getApiKey(request);
       if (provided !== apiKey) {
         return reply.status(401).send({ error: { message: 'Invalid or missing API key', type: 'authentication_error' } });
@@ -91,6 +111,14 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
     app.get('/', healthHandler);
   }
   app.get('/health', async () => ({ status: 'ok', service: 'arena-web-api' }));
+  app.get('/ready', async (_req, reply) => {
+    try {
+      const models = await driver.listModels();
+      return reply.send({ status: 'ready', service: 'arena-web-api', models: models.length });
+    } catch (err) {
+      return reply.status(503).send({ status: 'not_ready', error: { message: err instanceof Error ? err.message : 'driver unavailable' } });
+    }
+  });
 
   app.get('/v1/models', async (_request, reply) => {
     try {
