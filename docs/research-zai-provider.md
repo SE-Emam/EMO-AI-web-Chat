@@ -47,7 +47,7 @@ Notes:
   128K max output, native multimodal (image/video/file/text input), function calling, thinking always on.
   This is the ideal default for our bridge (cheapest, 3×-quota on Coding Plan, multimodal).
 - Legacy/other: `glm-4.7-flash`, `glm-4.5-flash`, `glm-4.6v-flash` exist and are **$0** (see §4).
-- BN: ` aren't needed; model codes are lowercase as listed.
+- Note: model codes are lowercase as listed.
 
 ## 4. Free tier / pricing (international z.ai)
 
@@ -75,7 +75,7 @@ Pricing per 1M tokens (USD), from `docs.z.ai/guides/overview/pricing`:
 - **Credits campaign:** invitation bonuses exist (10% of a friend's first order) but require the
   invitee to *purchase*; no documented automatic signup credit on the international platform today.
 - Chinese platform (`open.bigmodel.cn`): pay-as-you-go in RMB with user "equity levels" (积分) gating
-  concurrency; per-model free models also exist ( Pruitt flash models). A signup RMB bonus was
+  concurrency; per-model free models also exist (free flash models). A signup RMB bonus was
   offered historically but is **not documented in the current docs** — treat as unconfirmed.
 
 ## 5. Rate limits
@@ -133,7 +133,7 @@ zai: {
 New provider (no changes to existing arena driver): `src/arena/zai-driver.ts`
 - Implements the same `ArenaDriver` interface our `driver.ts` already uses
   (`listModels()` + `sendMessage(model, messages, onChunk, signal)`).
-- One `fetch(video)` POST to `${baseUrl}chat/completions` with `Authorization: Bearer <?>`; parse SSE
+- One `fetch()` POST to `${baseUrl}chat/completions` with `Authorization: Bearer <API_KEY>`; parse SSE
   `data:` lines, forward `choices[0].delta.content` strings through `onChunk`, and map
   `reasoning_content` to our chunk stream only if we want it (or drop it for chat parity).
 - Enforce temperature clamp to [0, 1]; cap `max_tokens` (≤131072); set `thinking: {type:'enabled'}`.

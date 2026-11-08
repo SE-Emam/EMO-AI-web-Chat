@@ -17,4 +17,5 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+      - run: tsc --noEmit -p tsconfig.test.json
       - run: npm audit --omit=dev

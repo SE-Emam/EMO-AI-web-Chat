@@ -148,6 +148,48 @@ You can configure Arena WebBridge via CLI flags or environment variables:
 | `ZAI_API_KEY` | _(empty)_ | **Optional**: enables the Z.AI (Zhipu) provider. When set, `glm-*` model IDs are served directly from Z.AI over plain HTTP (no browser, no Arena rate limits) |
 | `ZAI_BASE_URL` | `https://api.z.ai/api/paas/v4/` | Z.AI API base URL |
 | `ZAI_DEFAULT_MODEL` | `glm-5.3-flash` | Default model when a GLM id is unrecognized (`glm-4.7-flash` / `glm-4.5-flash` are completely free) |
+| `ZAI_WEB_ENABLED` | `false` | Enable Z.AI web-session (chat.z.ai) fallback for `glm-*` |
+| `ZAI_WEB_BASE_URL` | `https://chat.z.ai` | Z.AI web base URL |
+| `ZAI_WEB_USER_DATA_DIR` | `~/.arena-webbridge/zai-profile` | Persistent profile for the Z.AI web session |
+| `ZAI_WEB_HEADLESS` | `false` | Run Z.AI web browser headlessly |
+| `ZAI_WEB_TIMEOUT_MS` | `180000` | Z.AI web request timeout (ms) |
+| `ZAI_WEB_CAPTCHA_WAIT_MS` | `180000` | Z.AI web captcha wait (ms) |
+| `CLAUDE_WEB_ENABLED` | `false` | Enable Claude (claude.ai) web-session provider |
+| `CLAUDE_WEB_BASE_URL` | `https://claude.ai` | Claude web base URL |
+| `CLAUDE_WEB_USER_DATA_DIR` | `~/.arena-webbridge/claude-profile` | Persistent profile for the Claude web session |
+| `CLAUDE_WEB_HEADLESS` | `false` | Run Claude web browser headlessly |
+| `CLAUDE_WEB_TIMEOUT_MS` | `300000` | Claude web request timeout (ms) |
+| `TENCENT_AI_WEB_ENABLED` | `false` | Enable Tencent AI Studio (aistudio.tencent.ai) web provider |
+| `TENCENT_AI_WEB_BASE_URL` | `https://aistudio.tencent.ai` | Tencent AI Studio base URL |
+| `TENCENT_AI_WEB_USER_DATA_DIR` | `~/.arena-webbridge/tencent-ai-profile` | Persistent profile for the Tencent AI Studio session |
+| `TENCENT_AI_WEB_HEADLESS` | `false` | Run Tencent AI Studio web browser headlessly |
+| `TENCENT_AI_WEB_TIMEOUT_MS` | `300000` | Tencent AI Studio request timeout (ms) |
+| `GEMINI_WEB_ENABLED` | `false` | Enable Gemini (gemini.google.com) web provider |
+| `GEMINI_WEB_BASE_URL` | `https://gemini.google.com` | Gemini web base URL |
+| `GEMINI_WEB_USER_DATA_DIR` | `~/.arena-webbridge/gemini-profile` | Persistent profile for the Gemini web session |
+| `GEMINI_WEB_HEADLESS` | `false` | Run Gemini web browser headlessly |
+| `GEMINI_WEB_TIMEOUT_MS` | `300000` | Gemini web request timeout (ms) |
+| `QWEN_WEB_ENABLED` | `false` | Enable Qwen (chat.qwen.ai) web provider |
+| `QWEN_WEB_BASE_URL` | `https://chat.qwen.ai` | Qwen web base URL |
+| `QWEN_WEB_USER_DATA_DIR` | `~/.arena-webbridge/qwen-profile` | Persistent profile for the Qwen web session |
+| `QWEN_WEB_HEADLESS` | `false` | Run Qwen web browser headlessly |
+| `QWEN_WEB_TIMEOUT_MS` | `300000` | Qwen web request timeout (ms) |
+
+### Providers & Routing (model prefixes)
+
+At startup (`serve`) the bridge builds a routing chain — first match wins. Providers are enabled via env flags above (or the `gateway.json` UI, see `docs/gateway-integration.md`):
+
+| Provider | Model prefix(es) | Backend / base URL | Enablement |
+|----------|------------------|--------------------|------------|
+| **Arena Browser** (default fallback) | _anything else_ (plain IDs like `claude-3-7-sonnet`, `gpt-4o`, `auto`) | Browser automation of `https://arena.ai` | Always available |
+| **Z.AI REST API** | `glm-*` (via `ZAI_DEFAULT_MODEL_PREFIXES = ['glm-']`) | Direct fetch to `https://api.z.ai/api/paas/v4/` (no browser) | Set `ZAI_API_KEY` |
+| **Z.AI Web** | `glm-*` / `zai-web:*` | Browser session at `https://chat.z.ai` | `ZAI_WEB_ENABLED=1` |
+| **Claude Web** | `claude-web:*`, `claudeai:*` | Browser session at `https://claude.ai` | `CLAUDE_WEB_ENABLED=1` |
+| **Tencent AI Studio Web** | `tencent-ai:*`, `tencentai:*` | Browser session at `https://aistudio.tencent.ai` | `TENCENT_AI_WEB_ENABLED=1` |
+| **Gemini Web** | `gemini-web:*`, `geminiweb:*` | Browser session at `https://gemini.google.com` | `GEMINI_WEB_ENABLED=1` |
+| **Qwen Web** | `qwen-web:*`, `qwenweb:*` | Browser session at `https://chat.qwen.ai` | `QWEN_WEB_ENABLED=1` |
+
+Ordering notes: the explicit `claude-web:` / `tencent-ai:` / `gemini-web:` / `qwen-web:` prefixes avoid colliding with Arena's `claude-*` / `gemini-*` / `qwen-*` names. For `glm-*`, the Z.AI REST API runs first, then the Z.AI web session, then the Arena browser.
 
 ### Z.AI Provider (dual backend)
 
@@ -155,7 +197,7 @@ Arena's own quota is limited and can produce `403 recaptcha` / `429 rate limit` 
 
 | Requested model | Served by | Notes |
 |-----------------|-----------|-------|
-| `glm-5.3-flash`, `glm-5.3`, `glm-4.7`, `glm-4.6`, `glm-4.7-flash`, `glm-4.5-flash`, … | **Z.AI API** (direct fetch, SSE) | `glm-4.7-flash` and `glm-4.5-flash` are **$0** |
+| `glm-5.3-flash`, `glm-5.3-flashx`, `glm-5.3`, `glm-5.2`, `glm-5.1`, `glm-5`, `glm-4.7`, `glm-4.6`, `glm-4.7-flash`, `glm-4.5-flash` | **Z.AI API** (direct fetch, SSE) | `glm-4.7-flash` and `glm-4.5-flash` are **$0** |
 | Everything else (`claude-*`, `gpt-*`, `auto`, …) | **Arena browser** | as before |
 
 Get a Z.AI key at [z.ai/manage-apikey/apikey-list](https://z.ai/manage-apikey/apikey-list), then:
@@ -176,27 +218,35 @@ curl -s http://127.0.0.1:8989/v1/chat/completions \
 
 Arena WebBridge automatically resolves common model names and aliases to the corresponding model in Arena's Direct Chat:
 
-| Canonical ID | Common Aliases / Inputs |
+The alias table below mirrors `MODEL_ALIASES` in `src/arena/models.ts` exactly. Arena canonical IDs (`KNOWN_ARENA_MODELS`) are:
+
+`claude-3-5-sonnet`, `claude-3-7-sonnet`, `claude-3-opus`, `claude-3-haiku`, `gpt-4o`, `gpt-4o-mini`, `o1`, `o1-mini`, `o3-mini`, `deepseek-r1`, `deepseek-v3`, `gemini-2.0-flash`, `gemini-1.5-pro`, `gemini-1.5-flash`, `qwen-2.5-max`, `qwen-2.5-72b-instruct`, `llama-3.3-70b-instruct`, `llama-3.1-405b-instruct`, `mistral-large-2411`.
+
+| Canonical ID | Explicit `MODEL_ALIASES` (source: `src/arena/models.ts`) |
 |--------------|-------------------------|
+| `claude-3-5-sonnet` (default / `DEFAULT_MODEL`) | `auto`, `default`, `claude`, `claude-3.5-sonnet`, `claude-3-5-sonnet-latest`, `claude-3-sonnet` |
 | `claude-3-7-sonnet` | `claude-3.7-sonnet`, `claude-3-7-sonnet-latest` |
-| `claude-3-5-sonnet` | `claude-3.5-sonnet`, `claude`, `auto`, `default` |
 | `claude-3-opus` | `claude-3-opus-latest` |
-| `claude-3-haiku` | `claude-haiku` |
-| `deepseek-r1` | `deepseek-reasoner`, `deepseek`, `r1` |
-| `deepseek-v3` | `deepseek-chat`, `v3` |
-| `gpt-4o` | `gpt-4`, `chatgpt-4o`, `gpt-4-turbo` |
-| `gpt-4o-mini` | `gpt-4o-mini-2024-07-18` |
-| `o1` | `o1-preview`, `openai/o1` |
-| `o1-mini` | `o1-mini-2024-09-12` |
-| `o3-mini` | `o3-mini-latest` |
-| `gemini-2.0-flash` | `gemini-flash`, `gemini` |
+| `gpt-4o` | `gpt-4`, `gpt-4-turbo`, `chatgpt-4o`, `chatgpt-4o-latest` |
+| `deepseek-r1` | `deepseek`, `deepseek-reasoner` |
+| `deepseek-v3` | `deepseek-chat` |
+| `gemini-2.0-flash` | `gemini`, `gemini-flash` |
 | `gemini-1.5-pro` | `gemini-pro` |
-| `gemini-1.5-flash` | `gemini-1.5-flash-latest` |
-| `qwen-2.5-max` | `qwen`, `qwen-max` |
-| `qwen-2.5-72b-instruct` | `qwen-72b` |
-| `llama-3.3-70b-instruct` | `llama-3.3-70b` |
-| `llama-3.1-405b-instruct` | `llama-3.1-405b` |
-| `mistral-large-2411` | `mistral-large` |
+| `qwen-2.5-max` | `qwen` |
+| `o1` | `o1-preview` |
+| `claude-3-haiku`, `gpt-4o-mini`, `o1-mini`, `o3-mini`, `gemini-1.5-flash`, `qwen-2.5-72b-instruct`, `llama-3.3-70b-instruct`, `llama-3.1-405b-instruct`, `mistral-large-2411` | _(none — use the canonical ID exactly)_ |
+
+Beyond explicit aliases, the resolver also normalizes inputs: it lowercases/trims, strips a provider prefix (`openai/gpt-4o` → `gpt-4o`), strips trailing date snapshots (`...-20241022`), normalizes dots (`claude-3.5-sonnet` → `claude-3-5-sonnet`), and falls back to a suffix/partial match (e.g. `r1` → `deepseek-r1`). Arena mode prefixes (`arena/direct/<model>`, `direct:`, `agent:`, `side-by-side:`) are parsed separately (see `parseArenaTarget`).
+
+#### Z.AI (GLM) models
+
+Served by the Z.AI providers (source: `ZAI_MODELS` in `src/arena/zai-models.ts`):
+
+`glm-5.3-flash`, `glm-5.3-flashx`, `glm-5.3`, `glm-5.2`, `glm-5.1`, `glm-5`, `glm-4.7`, `glm-4.6`, `glm-4.7-flash`, `glm-4.5-flash`.
+
+Z.AI aliases (`normalizeZaiModel`): `glm`, `zai` → `glm-5.3-flash`. Date snapshots are stripped the same way, and bare partials (e.g. `5.3-flash` → `glm-5.3-flash`) resolve. The two `$0` models are `glm-4.7-flash` and `glm-4.5-flash` (`ZAI_FREE_MODELS`).
+
+Web providers expose per-provider pseudo-models that keep the session's current model: `claude-web:default`, `tencent-ai:default`, `gemini-web:default`, `qwen-web:default`.
 
 To list all models programmatically:
 ```bash

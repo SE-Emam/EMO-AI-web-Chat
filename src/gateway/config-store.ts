@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { GatewayConfigFile, ProviderConfig, WebProviderId } from './types.js';
 import { WEB_PROVIDER_IDS } from './types.js';
+import { providerSpec } from '../arena/providers.js';
 
 function generateApiKey(): string {
   return randomBytes(24).toString('base64url').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32) || randomBytes(16).toString('hex');
@@ -13,52 +14,56 @@ const DEFAULT_FILE = path.join(os.homedir(), '.arena-webbridge', 'gateway.json')
 
 function defaultProviderConfig(id: WebProviderId): ProviderConfig {
   const home = os.homedir();
+  const spec = providerSpec(id);
   const base = {
     enabled: false,
     settings: {} as Record<string, unknown>,
     availableModels: [] as string[],
     selectedModels: [] as string[],
   };
+  // baseUrl/timeout/profile derive from WEB_PROVIDERS (src/arena/providers.ts).
+  // Only headless + seed models remain here (gateway-store-local concerns).
+  const userDataDir = path.join(home, '.arena-webbridge', spec.profileDir);
   switch (id) {
     case 'arena-browser':
       return {
         ...base,
-        settings: { baseUrl: 'https://arena.ai', headless: true, userDataDir: path.join(home, '.arena-webbridge', 'chrome-profile') },
+        settings: { baseUrl: spec.defaultBaseUrl, headless: true, userDataDir },
         availableModels: ['auto'],
         selectedModels: ['auto'],
       };
     case 'zai-web':
       return {
         ...base,
-        settings: { baseUrl: 'https://chat.z.ai', headless: false, userDataDir: path.join(home, '.arena-webbridge', 'zai-profile'), timeoutMs: 180000, captchaWaitMs: 180000 },
+        settings: { baseUrl: spec.defaultBaseUrl, headless: false, userDataDir, timeoutMs: spec.defaultTimeoutMs, captchaWaitMs: spec.defaultCaptchaWaitMs ?? spec.defaultTimeoutMs },
         availableModels: ['glm-4.5-flash'],
         selectedModels: ['glm-4.5-flash'],
       };
     case 'claude-web':
       return {
         ...base,
-        settings: { baseUrl: 'https://claude.ai', headless: false, userDataDir: path.join(home, '.arena-webbridge', 'claude-profile'), timeoutMs: 300000 },
+        settings: { baseUrl: spec.defaultBaseUrl, headless: false, userDataDir, timeoutMs: spec.defaultTimeoutMs },
         availableModels: ['claude-web:default'],
         selectedModels: ['claude-web:default'],
       };
     case 'tencent-ai-web':
       return {
         ...base,
-        settings: { baseUrl: 'https://aistudio.tencent.ai', headless: false, userDataDir: path.join(home, '.arena-webbridge', 'tencent-ai-profile'), timeoutMs: 300000 },
+        settings: { baseUrl: spec.defaultBaseUrl, headless: false, userDataDir, timeoutMs: spec.defaultTimeoutMs },
         availableModels: ['tencent-ai:default'],
         selectedModels: ['tencent-ai:default'],
       };
     case 'gemini-web':
       return {
         ...base,
-        settings: { baseUrl: 'https://gemini.google.com', headless: false, userDataDir: path.join(home, '.arena-webbridge', 'gemini-profile'), timeoutMs: 300000 },
+        settings: { baseUrl: spec.defaultBaseUrl, headless: false, userDataDir, timeoutMs: spec.defaultTimeoutMs },
         availableModels: ['gemini-web:default'],
         selectedModels: ['gemini-web:default'],
       };
     case 'qwen-web':
       return {
         ...base,
-        settings: { baseUrl: 'https://chat.qwen.ai', headless: false, userDataDir: path.join(home, '.arena-webbridge', 'qwen-profile'), timeoutMs: 300000 },
+        settings: { baseUrl: spec.defaultBaseUrl, headless: false, userDataDir, timeoutMs: spec.defaultTimeoutMs },
         availableModels: ['qwen-web:default'],
         selectedModels: ['qwen-web:default'],
       };

@@ -23,7 +23,7 @@ This guide provides step-by-step instructions for integrating **Arena WebBridge*
                                       └─────────────────────────────────────────┘
 ```
 
-Arena WebBridge exposes an OpenAI-compliant HTTP API (`/v1/chat/completions`, `/v1/models`, `/health`). Multi-tenant gateways can route requests for leading frontier models (Claude 3.7 Sonnet, DeepSeek R1, GPT-4o, Gemini 2.0 Flash) through Arena WebBridge without requiring paid API keys.
+Arena WebBridge exposes an OpenAI-compliant HTTP API (`/v1/chat/completions`, `/v1/models`, `/health`). Multi-tenant gateways can route requests for leading frontier models (Claude 3.7 Sonnet, DeepSeek R1, GPT-4o, Gemini 2.0 Flash) through Arena WebBridge without requiring paid API keys. Beyond Arena-browser models, it also serves Z.AI GLM models (`glm-*`) via the Z.AI REST API or web session when configured, plus prefixed web-session models (`claude-web:`, `tencent-ai:`, `gemini-web:`, `qwen-web:`) — see §4.2.
 
 ---
 
@@ -70,6 +70,8 @@ Fill in the channel settings as follows:
 | **Group** (分组) | `default` (or custom group) | Assign to the desired user tiers |
 
 ### Supported Model Identifiers for Gateway Configuration:
+Arena-browser canonical IDs (`KNOWN_ARENA_MODELS`, 19) — pass these verbatim, or any explicit `MODEL_ALIASES` alias (see README § Supported Models):
+
 ```
 claude-3-7-sonnet
 claude-3-5-sonnet
@@ -92,6 +94,23 @@ llama-3.1-405b-instruct
 mistral-large-2411
 ```
 
+Z.AI GLM IDs (`ZAI_MODELS`, 10) — require `ZAI_API_KEY` (REST) or `ZAI_WEB_ENABLED=1` (web session):
+
+```
+glm-5.3-flash
+glm-5.3-flashx
+glm-5.3
+glm-5.2
+glm-5.1
+glm-5
+glm-4.7
+glm-4.6
+glm-4.7-flash
+glm-4.5-flash
+```
+
+Web-session pseudo-models (require the matching `*_WEB_ENABLED=1`): `claude-web:default`, `tencent-ai:default`, `gemini-web:default`, `qwen-web:default`.
+
 ### Step 3.3: Test Connection
 1. In the channel list, locate the newly created `Arena WebBridge` channel.
 2. Click **Test** (测试).
@@ -101,46 +120,72 @@ mistral-large-2411
 
 ## 4. Configuration in Emo-AI-Gateway
 
-### Step 4.1: Upstream Provider Configuration
-In Emo-AI-Gateway's provider configuration file (`config.yaml` or UI):
+> **Note (source of truth):** This bridge has **no `config.yaml`**. The EMO.ai local gateway UI (`./scripts/EMO.ai` / `npm run emo`) edits a **file-backed JSON store at `~/.arena-webbridge/gateway.json`**, managed in code by `GatewayConfigStore` (`src/gateway/config-store.ts`). Edit it through the UI where possible; `save()` writes atomically (temp file + rename, `0600`).
 
-```yaml
-providers:
-  - id: arena-webbridge
-    name: "Arena WebBridge Local"
-    type: openai
-    base_url: "http://127.0.0.1:8989/v1"  # Or http://host.docker.internal:8989/v1 for Docker
-    api_key: "sk-arena-local"
-    timeout_seconds: 120
-    models:
-      - id: "claude-3-7-sonnet"
-        display_name: "Claude 3.7 Sonnet (Arena)"
-        stream: true
-      - id: "deepseek-r1"
-        display_name: "DeepSeek R1 (Arena)"
-        stream: true
-      - id: "gpt-4o"
-        display_name: "GPT-4o (Arena)"
-        stream: true
-      - id: "gemini-2.0-flash"
-        display_name: "Gemini 2.0 Flash (Arena)"
-        stream: true
+### Step 4.1: `gateway.json` Shape
+The file carries a gateway header, a UI heartbeat setting, and per-web-provider blocks:
+
+```json
+{
+  "version": 1,
+  "gateway": { "port": 8989, "host": "127.0.0.1", "baseUriDisplay": "mac.ai/v1", "apiKey": "<generated>", "requireApiKey": true },
+  "ui": { "heartbeatTimeoutMs": 15000 },
+  "providers": {
+    "arena-browser": {
+      "enabled": false,
+      "settings": { "baseUrl": "https://arena.ai", "headless": true, "userDataDir": "~/.arena-webbridge/chrome-profile" },
+      "availableModels": ["auto"],
+      "selectedModels": ["auto"]
+    },
+    "zai-web": {
+      "enabled": false,
+      "settings": { "baseUrl": "https://chat.z.ai", "headless": false, "userDataDir": "~/.arena-webbridge/zai-profile", "timeoutMs": 180000, "captchaWaitMs": 180000 },
+      "availableModels": ["glm-4.5-flash"],
+      "selectedModels": ["glm-4.5-flash"]
+    },
+    "claude-web": {
+      "enabled": false,
+      "settings": { "baseUrl": "https://claude.ai", "headless": false, "userDataDir": "~/.arena-webbridge/claude-profile", "timeoutMs": 300000 },
+      "availableModels": ["claude-web:default"],
+      "selectedModels": ["claude-web:default"]
+    },
+    "tencent-ai-web": {
+      "enabled": false,
+      "settings": { "baseUrl": "https://aistudio.tencent.ai", "headless": false, "userDataDir": "~/.arena-webbridge/tencent-ai-profile", "timeoutMs": 300000 },
+      "availableModels": ["tencent-ai:default"],
+      "selectedModels": ["tencent-ai:default"]
+    },
+    "gemini-web": {
+      "enabled": false,
+      "settings": { "baseUrl": "https://gemini.google.com", "headless": false, "userDataDir": "~/.arena-webbridge/gemini-profile", "timeoutMs": 300000 },
+      "availableModels": ["gemini-web:default"],
+      "selectedModels": ["gemini-web:default"]
+    },
+    "qwen-web": {
+      "enabled": false,
+      "settings": { "baseUrl": "https://chat.qwen.ai", "headless": false, "userDataDir": "~/.arena-webbridge/qwen-profile", "timeoutMs": 300000 },
+      "availableModels": ["qwen-web:default"],
+      "selectedModels": ["qwen-web:default"]
+    }
+  }
+}
 ```
 
-### Step 4.2: Routing Rule Definition
-Configure routing to prioritize Arena WebBridge for specific models or fallbacks:
+Defaults above mirror `defaultGatewayConfig()` (`src/gateway/config-store.ts`). A partial file is merged over defaults, so new providers/settings appear even if absent from an older file. As an external OpenAI-compatible upstream from the Emo-AI-Gateway's perspective, point its provider at `http://127.0.0.1:8989/v1` (or `http://host.docker.internal:8989/v1` for Docker) with the gateway `apiKey` from `gateway.json` (or any string if `requireApiKey` is off for local use).
 
-```yaml
-routes:
-  - model: "claude-3-7-sonnet"
-    strategy: priority
-    targets:
-      - provider: arena-webbridge
-        weight: 100
-      - provider: official-anthropic
-        weight: 0
-        fallback_on: [500, 502, 503, 504]
-```
+### Step 4.2: Routing Rules (prefix dispatch, not a routes block)
+There is **no `routes:` array in `gateway.json`**. Dispatch is by model-ID prefix via the provider registry (`WEB_PROVIDERS` in `src/arena/providers.ts`, first match wins):
+
+| Model prefix | Routes to |
+|--------------|-----------|
+| `claude-web:` / `claudeai:` | `claude-web` (claude.ai session) |
+| `tencent-ai:` / `tencentai:` | `tencent-ai-web` (aistudio.tencent.ai session) |
+| `gemini-web:` / `geminiweb:` | `gemini-web` (gemini.google.com session) |
+| `qwen-web:` / `qwenweb:` | `qwen-web` (chat.qwen.ai session) |
+| `glm-*` (+ `zai-web:`) | Z.AI REST API (`ZAI_API_KEY`) → Z.AI web → Arena fallback |
+| everything else | `arena-browser` fallback (canonical Arena IDs such as `claude-3-7-sonnet`, `deepseek-r1`) |
+
+Z.AI canonical IDs are `glm-5.3-flash`, `glm-5.3-flashx`, `glm-5.3`, `glm-5.2`, `glm-5.1`, `glm-5`, `glm-4.7`, `glm-4.6`, `glm-4.7-flash`, `glm-4.5-flash` (`ZAI_MODELS`). In the gateway UI, enable a provider by flipping its `enabled` flag (or the equivalent `*_WEB_ENABLED=1` env var) and keep each provider's `:default` pseudo-model selected to pin the session's current model.
 
 ---
 

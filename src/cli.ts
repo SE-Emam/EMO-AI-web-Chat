@@ -5,7 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import type { FastifyInstance } from 'fastify';
-import { loadConfig, resolveHomePath } from './config.js';
+import { DEFAULT_ZAI_MODEL_PREFIXES, loadConfig, resolveHomePath } from './config.js';
+import { matchesProvider } from './arena/providers.js';
 import { BrowserManager } from './browser/manager.js';
 import { DefaultArenaDriver } from './arena/driver.js';
 import { ZaiDriver } from './arena/zai-driver.js';
@@ -181,18 +182,25 @@ export function createCli(services: CliServices = {}): Command {
         : new DefaultArenaDriver(browserManager as BrowserManager, config);
 
       // Provider chain (first match wins, failures fall back to the next):
+      // Prefixes/defaults are derived from WEB_PROVIDERS via matchesProvider()
+      // (src/arena/providers.ts) — do not add new prefix literals here.
       //   claude-web:* / claudeai:* → claude.ai web session (if enabled) — explicit prefix avoids Arena claude-* conflict
       //   tencent-ai:* / tencentai:* → aistudio.tencent.ai web session (if enabled)
       //   gemini-web:* / geminiweb:* → gemini.google.com web session (if enabled) — explicit to avoid hijacking gemini-* API names
       //   glm-* → Z.AI REST API (if ZAI_API_KEY) → chat.z.ai web session (if enabled) → Arena browser
       //   else  → Arena browser directly
+      // `zai-api` is excluded from the web registry by design (REST, not scraping);
+      // its predicate derives from DEFAULT_ZAI_MODEL_PREFIXES in src/config.ts.
+      // `zai-web` uses matchesProvider() so both `zai-web:*` and `glm-*` route here
+      // (previously the CLI only matched `glm-*`, dropping the `zai-web:` prefix —
+      // this unification fixes that drift and matches provider-manager behavior).
       const routes: DriverRoute[] = [];
       if (config.claudeWeb?.enabled) {
         console.log(`Claude web-session provider enabled (profile: ${config.claudeWeb.userDataDir}, headed=${!config.claudeWeb.headless}). Login/challenges are solved by you in the visible window. Use model prefix claude-web:<model> or claudeai:<model>.`);
         routes.push({
           name: 'claude-web',
           driver: new ClaudeWebDriver(config.claudeWeb),
-          matches: (m) => m.startsWith('claude-web:') || m.startsWith('claudeai:'),
+          matches: (m) => matchesProvider('claude-web', m),
         });
       }
       if (config.tencentAiWeb?.enabled) {
@@ -200,7 +208,7 @@ export function createCli(services: CliServices = {}): Command {
         routes.push({
           name: 'tencent-ai-web',
           driver: new TencentAiWebDriver(config.tencentAiWeb),
-          matches: (m) => m.startsWith('tencent-ai:') || m.startsWith('tencentai:'),
+          matches: (m) => matchesProvider('tencent-ai-web', m),
         });
       }
       if (config.geminiWeb?.enabled) {
@@ -208,7 +216,7 @@ export function createCli(services: CliServices = {}): Command {
         routes.push({
           name: 'gemini-web',
           driver: new GeminiWebDriver(config.geminiWeb),
-          matches: (m) => m.startsWith('gemini-web:') || m.startsWith('geminiweb:'),
+          matches: (m) => matchesProvider('gemini-web', m),
         });
       }
       if (config.qwenWeb?.enabled) {
@@ -216,18 +224,18 @@ export function createCli(services: CliServices = {}): Command {
         routes.push({
           name: 'qwen-web',
           driver: new QwenWebDriver(config.qwenWeb),
-          matches: (m) => m.startsWith('qwen-web:') || m.startsWith('qwenweb:'),
+          matches: (m) => matchesProvider('qwen-web', m),
         });
       }
       if (config.zai) {
         console.log(`Z.AI REST provider enabled (default: ${config.zai.defaultModel}). glm-* requests go direct to api.z.ai.`);
-        routes.push({ name: 'zai-api', driver: new ZaiDriver(config.zai), matches: (m) => m.startsWith('glm-') });
+        routes.push({ name: 'zai-api', driver: new ZaiDriver(config.zai), matches: (m) => DEFAULT_ZAI_MODEL_PREFIXES.some((p) => m.startsWith(p)) });
       }
       if (config.zaiWeb?.enabled) {
         console.log(`Z.AI web-session provider enabled (profile: ${config.zaiWeb.userDataDir}, headed=${!config.zaiWeb.headless}). Captchas are solved by you in the visible window.`);
-        routes.push({ name: 'zai-web', driver: new ZaiWebDriver(config.zaiWeb), matches: (m) => m.startsWith('glm-') });
+        routes.push({ name: 'zai-web', driver: new ZaiWebDriver(config.zaiWeb), matches: (m) => matchesProvider('zai-web', m) });
       }
-      routes.push({ name: 'arena-browser', driver: arenaDriver, matches: () => true });
+      routes.push({ name: 'arena-browser', driver: arenaDriver, matches: (m) => matchesProvider('arena-browser', m) });
 
       let driver: ArenaDriver = new RoutingDriver(routes);
 

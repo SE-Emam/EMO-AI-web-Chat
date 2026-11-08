@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import type { Config } from './types.js';
+import { providerSpec } from './arena/providers.js';
 
 /**
  * Resolves a file path, expanding leading '~' to the user's home directory.
@@ -18,58 +19,46 @@ export function resolveHomePath(filePath: string): string {
 /**
  * Default configuration values.
  */
+const profileDirFor = (id: 'arena-browser' | 'zai-web' | 'claude-web' | 'tencent-ai-web' | 'gemini-web' | 'qwen-web'): string =>
+  path.join(os.homedir(), '.arena-webbridge', providerSpec(id).profileDir);
+
 export const DEFAULT_CONFIG: Config = {
   port: 8989,
   host: '127.0.0.1',
-  userDataDir: path.join(os.homedir(), '.arena-webbridge', 'chrome-profile'),
-  arenaBaseUrl: 'https://arena.ai',
+  userDataDir: profileDirFor('arena-browser'),
+  // Derived from WEB_PROVIDERS — do not hardcode URLs here.
+  arenaBaseUrl: providerSpec('arena-browser').defaultBaseUrl,
   headless: true,
 };
 
+// --- Z.AI REST API (not a web provider) ---
+// Excluded from providers.ts by design (see registry header). Canonical here.
 export const DEFAULT_ZAI_BASE_URL = 'https://api.z.ai/api/paas/v4/';
 export const DEFAULT_ZAI_MODEL = 'glm-5.3-flash';
+// NOTE: must stay in sync with zai-web `alsoMatches: glm-*` in providers.ts,
+// but exists separately because REST routing prefixes are configurable.
 export const DEFAULT_ZAI_MODEL_PREFIXES = ['glm-'];
 
-export const DEFAULT_ZAI_WEB_BASE_URL = 'https://chat.z.ai';
-export const DEFAULT_ZAI_WEB_USER_DATA_DIR = path.join(
-  os.homedir(),
-  '.arena-webbridge',
-  'zai-profile'
-);
-export const DEFAULT_ZAI_WEB_TIMEOUT_MS = 180_000;
-export const DEFAULT_ZAI_WEB_CAPTCHA_WAIT_MS = 180_000;
+export const DEFAULT_ZAI_WEB_BASE_URL = providerSpec('zai-web').defaultBaseUrl;
+export const DEFAULT_ZAI_WEB_USER_DATA_DIR = profileDirFor('zai-web');
+export const DEFAULT_ZAI_WEB_TIMEOUT_MS = providerSpec('zai-web').defaultTimeoutMs;
+export const DEFAULT_ZAI_WEB_CAPTCHA_WAIT_MS = providerSpec('zai-web').defaultCaptchaWaitMs ?? 180_000;
 
-export const DEFAULT_CLAUDE_WEB_BASE_URL = 'https://claude.ai';
-export const DEFAULT_CLAUDE_WEB_USER_DATA_DIR = path.join(
-  os.homedir(),
-  '.arena-webbridge',
-  'claude-profile'
-);
-export const DEFAULT_CLAUDE_WEB_TIMEOUT_MS = 300_000;
+export const DEFAULT_CLAUDE_WEB_BASE_URL = providerSpec('claude-web').defaultBaseUrl;
+export const DEFAULT_CLAUDE_WEB_USER_DATA_DIR = profileDirFor('claude-web');
+export const DEFAULT_CLAUDE_WEB_TIMEOUT_MS = providerSpec('claude-web').defaultTimeoutMs;
 
-export const DEFAULT_TENCENT_AI_WEB_BASE_URL = 'https://aistudio.tencent.ai';
-export const DEFAULT_TENCENT_AI_WEB_USER_DATA_DIR = path.join(
-  os.homedir(),
-  '.arena-webbridge',
-  'tencent-ai-profile'
-);
-export const DEFAULT_TENCENT_AI_WEB_TIMEOUT_MS = 300_000;
+export const DEFAULT_TENCENT_AI_WEB_BASE_URL = providerSpec('tencent-ai-web').defaultBaseUrl;
+export const DEFAULT_TENCENT_AI_WEB_USER_DATA_DIR = profileDirFor('tencent-ai-web');
+export const DEFAULT_TENCENT_AI_WEB_TIMEOUT_MS = providerSpec('tencent-ai-web').defaultTimeoutMs;
 
-export const DEFAULT_GEMINI_WEB_BASE_URL = 'https://gemini.google.com';
-export const DEFAULT_GEMINI_WEB_USER_DATA_DIR = path.join(
-  os.homedir(),
-  '.arena-webbridge',
-  'gemini-profile'
-);
-export const DEFAULT_GEMINI_WEB_TIMEOUT_MS = 300_000;
+export const DEFAULT_GEMINI_WEB_BASE_URL = providerSpec('gemini-web').defaultBaseUrl;
+export const DEFAULT_GEMINI_WEB_USER_DATA_DIR = profileDirFor('gemini-web');
+export const DEFAULT_GEMINI_WEB_TIMEOUT_MS = providerSpec('gemini-web').defaultTimeoutMs;
 
-export const DEFAULT_QWEN_WEB_BASE_URL = 'https://chat.qwen.ai';
-export const DEFAULT_QWEN_WEB_USER_DATA_DIR = path.join(
-  os.homedir(),
-  '.arena-webbridge',
-  'qwen-profile'
-);
-export const DEFAULT_QWEN_WEB_TIMEOUT_MS = 300_000;
+export const DEFAULT_QWEN_WEB_BASE_URL = providerSpec('qwen-web').defaultBaseUrl;
+export const DEFAULT_QWEN_WEB_USER_DATA_DIR = profileDirFor('qwen-web');
+export const DEFAULT_QWEN_WEB_TIMEOUT_MS = providerSpec('qwen-web').defaultTimeoutMs;
 
 /**
  * Loads configuration with overrides from environment variables and explicit options.

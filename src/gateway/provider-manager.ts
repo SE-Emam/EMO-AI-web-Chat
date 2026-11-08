@@ -2,7 +2,7 @@ import { chromium } from 'playwright';
 import type { ArenaDriver, ChatMessage } from '../types.js';
 import type { GatewayConfigFile, ProviderConfig, ProviderRuntimeState, ProviderStatus, WebProviderId } from './types.js';
 import { WEB_PROVIDER_IDS } from './types.js';
-import { providerSpec } from '../arena/providers.js';
+import { matchesProvider, providerSpec } from '../arena/providers.js';
 import type { GatewayConfigStore } from './config-store.js';
 import { BrowserManager } from '../browser/manager.js';
 import { DefaultArenaDriver } from '../arena/driver.js';
@@ -14,14 +14,16 @@ import { QwenWebDriver } from '../arena/qwen-web-driver.js';
 
 type Factory = (cfg: ProviderConfig) => ArenaDriver | Promise<ArenaDriver>;
 
+// Web-provider metadata derives names, prefixes, baseUrls and timeouts from
+// WEB_PROVIDERS (src/arena/providers.ts) — no URL literals here.
 const PROVIDER_META: Record<WebProviderId, { name: string; matches: (model: string) => boolean; defaultFactory: Factory }> = {
   'arena-browser': {
     name: providerSpec('arena-browser').name,
-    matches: (_m) => true,
+    matches: (m) => matchesProvider('arena-browser', m),
     defaultFactory: (cfg) => {
       const browserManager = new BrowserManager({
         userDataDir: String(cfg.settings.userDataDir || ''),
-        arenaBaseUrl: String(cfg.settings.baseUrl || 'https://arena.ai'),
+        arenaBaseUrl: String(cfg.settings.baseUrl || providerSpec('arena-browser').defaultBaseUrl),
         headless: cfg.settings.headless !== false,
       });
       return new DefaultArenaDriver(browserManager);
@@ -29,58 +31,58 @@ const PROVIDER_META: Record<WebProviderId, { name: string; matches: (model: stri
   },
   'zai-web': {
     name: providerSpec('zai-web').name,
-    matches: (m) => providerSpec('zai-web').prefixes.some((p) => m.startsWith(p)) || m.startsWith('glm-'),
+    matches: (m) => matchesProvider('zai-web', m),
     defaultFactory: (cfg) => new ZaiWebDriver({
       enabled: true,
       userDataDir: String(cfg.settings.userDataDir || ''),
-      baseUrl: String(cfg.settings.baseUrl || 'https://chat.z.ai'),
+      baseUrl: String(cfg.settings.baseUrl || providerSpec('zai-web').defaultBaseUrl),
       headless: cfg.settings.headless === true ? true : false,
-      timeoutMs: Number(cfg.settings.timeoutMs || 180000),
-      captchaWaitMs: Number(cfg.settings.captchaWaitMs || 180000),
+      timeoutMs: Number(cfg.settings.timeoutMs || providerSpec('zai-web').defaultTimeoutMs),
+      captchaWaitMs: Number(cfg.settings.captchaWaitMs || providerSpec('zai-web').defaultCaptchaWaitMs || providerSpec('zai-web').defaultTimeoutMs),
     }),
   },
   'claude-web': {
     name: providerSpec('claude-web').name,
-    matches: (m) => providerSpec('claude-web').prefixes.some((p) => m.startsWith(p)),
+    matches: (m) => matchesProvider('claude-web', m),
     defaultFactory: (cfg) => new ClaudeWebDriver({
       enabled: true,
       userDataDir: String(cfg.settings.userDataDir || ''),
-      baseUrl: String(cfg.settings.baseUrl || 'https://claude.ai'),
+      baseUrl: String(cfg.settings.baseUrl || providerSpec('claude-web').defaultBaseUrl),
       headless: cfg.settings.headless === true ? true : false,
-      timeoutMs: Number(cfg.settings.timeoutMs || 300000),
+      timeoutMs: Number(cfg.settings.timeoutMs || providerSpec('claude-web').defaultTimeoutMs),
     }),
   },
   'tencent-ai-web': {
     name: providerSpec('tencent-ai-web').name,
-    matches: (m) => providerSpec('tencent-ai-web').prefixes.some((p) => m.startsWith(p)),
+    matches: (m) => matchesProvider('tencent-ai-web', m),
     defaultFactory: (cfg) => new TencentAiWebDriver({
       enabled: true,
       userDataDir: String(cfg.settings.userDataDir || ''),
-      baseUrl: String(cfg.settings.baseUrl || 'https://aistudio.tencent.ai'),
+      baseUrl: String(cfg.settings.baseUrl || providerSpec('tencent-ai-web').defaultBaseUrl),
       headless: cfg.settings.headless === true ? true : false,
-      timeoutMs: Number(cfg.settings.timeoutMs || 300000),
+      timeoutMs: Number(cfg.settings.timeoutMs || providerSpec('tencent-ai-web').defaultTimeoutMs),
     }),
   },
   'gemini-web': {
     name: providerSpec('gemini-web').name,
-    matches: (m) => providerSpec('gemini-web').prefixes.some((p) => m.startsWith(p)),
+    matches: (m) => matchesProvider('gemini-web', m),
     defaultFactory: (cfg) => new GeminiWebDriver({
       enabled: true,
       userDataDir: String(cfg.settings.userDataDir || ''),
-      baseUrl: String(cfg.settings.baseUrl || 'https://gemini.google.com'),
+      baseUrl: String(cfg.settings.baseUrl || providerSpec('gemini-web').defaultBaseUrl),
       headless: cfg.settings.headless === true ? true : false,
-      timeoutMs: Number(cfg.settings.timeoutMs || 300000),
+      timeoutMs: Number(cfg.settings.timeoutMs || providerSpec('gemini-web').defaultTimeoutMs),
     }),
   },
   'qwen-web': {
     name: providerSpec('qwen-web').name,
-    matches: (m) => providerSpec('qwen-web').prefixes.some((p) => m.startsWith(p)),
+    matches: (m) => matchesProvider('qwen-web', m),
     defaultFactory: (cfg) => new QwenWebDriver({
       enabled: true,
       userDataDir: String(cfg.settings.userDataDir || ''),
-      baseUrl: String(cfg.settings.baseUrl || 'https://chat.qwen.ai'),
+      baseUrl: String(cfg.settings.baseUrl || providerSpec('qwen-web').defaultBaseUrl),
       headless: cfg.settings.headless === true ? true : false,
-      timeoutMs: Number(cfg.settings.timeoutMs || 300000),
+      timeoutMs: Number(cfg.settings.timeoutMs || providerSpec('qwen-web').defaultTimeoutMs),
     }),
   },
 };
@@ -332,14 +334,14 @@ export class ProviderManager {
   }
 
   private loginUrl(id: WebProviderId): string {
-    const base = String(this.providerConfig(id).settings.baseUrl || '');
+    const base = String(this.providerConfig(id).settings.baseUrl || providerSpec(id).defaultBaseUrl);
     switch (id) {
-      case 'arena-browser': return base || 'https://arena.ai';
-      case 'zai-web': return base || 'https://chat.z.ai';
-      case 'claude-web': return (base || 'https://claude.ai').replace(/\/$/, '') + '/login';
-      case 'tencent-ai-web': return base || 'https://aistudio.tencent.ai/';
-      case 'gemini-web': return (base || 'https://gemini.google.com').replace(/\/$/, '') + '/app';
-      case 'qwen-web': return base || 'https://chat.qwen.ai/';
+      case 'arena-browser': return base;
+      case 'zai-web': return base;
+      case 'claude-web': return base.replace(/\/$/, '') + '/login';
+      case 'tencent-ai-web': return base.endsWith('/') ? base : base + '/';
+      case 'gemini-web': return base.replace(/\/$/, '') + '/app';
+      case 'qwen-web': return base.endsWith('/') ? base : base + '/';
     }
   }
 

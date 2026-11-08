@@ -3,6 +3,7 @@ import { ZaiDriver } from '../src/arena/zai-driver.js';
 import { RoutingDriver } from '../src/arena/routing-driver.js';
 import { loadConfig, DEFAULT_ZAI_BASE_URL } from '../src/config.js';
 import { ZAI_MODELS, isZaiModel, normalizeZaiModel } from '../src/arena/zai-models.js';
+import type { ArenaDriver } from '../src/types.js';
 
 function sseResponse(lines: string[], status = 200): Response {
   const stream = new ReadableStream<Uint8Array>({
