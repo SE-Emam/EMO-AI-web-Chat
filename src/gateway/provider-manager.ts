@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import type { ArenaDriver, ChatMessage } from '../types.js';
 import type { GatewayConfigFile, ProviderConfig, ProviderRuntimeState, ProviderStatus, WebProviderId } from './types.js';
 import { WEB_PROVIDER_IDS } from './types.js';
+import { providerSpec } from '../arena/providers.js';
 import type { GatewayConfigStore } from './config-store.js';
 import { BrowserManager } from '../browser/manager.js';
 import { DefaultArenaDriver } from '../arena/driver.js';
@@ -15,7 +16,7 @@ type Factory = (cfg: ProviderConfig) => ArenaDriver | Promise<ArenaDriver>;
 
 const PROVIDER_META: Record<WebProviderId, { name: string; matches: (model: string) => boolean; defaultFactory: Factory }> = {
   'arena-browser': {
-    name: 'Arena Browser',
+    name: providerSpec('arena-browser').name,
     matches: (_m) => true,
     defaultFactory: (cfg) => {
       const browserManager = new BrowserManager({
@@ -27,8 +28,8 @@ const PROVIDER_META: Record<WebProviderId, { name: string; matches: (model: stri
     },
   },
   'zai-web': {
-    name: 'ZAI Web',
-    matches: (m) => m.startsWith('glm-') || m.startsWith('zai-web:'),
+    name: providerSpec('zai-web').name,
+    matches: (m) => providerSpec('zai-web').prefixes.some((p) => m.startsWith(p)) || m.startsWith('glm-'),
     defaultFactory: (cfg) => new ZaiWebDriver({
       enabled: true,
       userDataDir: String(cfg.settings.userDataDir || ''),
@@ -39,8 +40,8 @@ const PROVIDER_META: Record<WebProviderId, { name: string; matches: (model: stri
     }),
   },
   'claude-web': {
-    name: 'Claude Web',
-    matches: (m) => m.startsWith('claude-web:') || m.startsWith('claudeai:'),
+    name: providerSpec('claude-web').name,
+    matches: (m) => providerSpec('claude-web').prefixes.some((p) => m.startsWith(p)),
     defaultFactory: (cfg) => new ClaudeWebDriver({
       enabled: true,
       userDataDir: String(cfg.settings.userDataDir || ''),
@@ -50,8 +51,8 @@ const PROVIDER_META: Record<WebProviderId, { name: string; matches: (model: stri
     }),
   },
   'tencent-ai-web': {
-    name: 'Tencent AI Studio Web',
-    matches: (m) => m.startsWith('tencent-ai:') || m.startsWith('tencentai:'),
+    name: providerSpec('tencent-ai-web').name,
+    matches: (m) => providerSpec('tencent-ai-web').prefixes.some((p) => m.startsWith(p)),
     defaultFactory: (cfg) => new TencentAiWebDriver({
       enabled: true,
       userDataDir: String(cfg.settings.userDataDir || ''),
@@ -61,8 +62,8 @@ const PROVIDER_META: Record<WebProviderId, { name: string; matches: (model: stri
     }),
   },
   'gemini-web': {
-    name: 'Gemini Web',
-    matches: (m) => m.startsWith('gemini-web:') || m.startsWith('geminiweb:'),
+    name: providerSpec('gemini-web').name,
+    matches: (m) => providerSpec('gemini-web').prefixes.some((p) => m.startsWith(p)),
     defaultFactory: (cfg) => new GeminiWebDriver({
       enabled: true,
       userDataDir: String(cfg.settings.userDataDir || ''),
@@ -72,8 +73,8 @@ const PROVIDER_META: Record<WebProviderId, { name: string; matches: (model: stri
     }),
   },
   'qwen-web': {
-    name: 'Qwen Web',
-    matches: (m) => m.startsWith('qwen-web:') || m.startsWith('qwenweb:'),
+    name: providerSpec('qwen-web').name,
+    matches: (m) => providerSpec('qwen-web').prefixes.some((p) => m.startsWith(p)),
     defaultFactory: (cfg) => new QwenWebDriver({
       enabled: true,
       userDataDir: String(cfg.settings.userDataDir || ''),

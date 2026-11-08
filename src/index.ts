@@ -10,6 +10,7 @@ export * from './arena/claude-web-driver.js';
 export * from './arena/tencent-ai-web-driver.js';
 export * from './arena/gemini-web-driver.js';
 export * from './arena/qwen-web-driver.js';
+export * from './arena/providers.js';
 export * from './cli.js';
 
 
