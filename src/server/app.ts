@@ -100,7 +100,7 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
   }
 
   if (gateway) {
-    registerGatewayUi(app);
+    registerGatewayUi(app, { apiKey });
     registerGatewayRoutes(app, {
       manager: gateway.manager,
       tracker: gateway.tracker,

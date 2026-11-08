@@ -50,7 +50,7 @@ small{color:var(--muted)}
 async function api(path, opts={}){
   const headers = {...(opts.headers||{})};
   if (opts.body != null && headers['Content-Type'] == null && headers['content-type'] == null) headers['Content-Type']='application/json';
-  const key = localStorage.getItem('emoApiKey') || 'mac';
+  const key = localStorage.getItem('emoApiKey') || '__EMO_API_KEY__';
   if (!headers['Authorization'] && !headers['authorization'] && !headers['x-api-key']) headers['Authorization']='Bearer '+key;
   const r=await fetch(path,{...opts,headers});
   const t=await r.text(); let d; try{d=JSON.parse(t)}catch{d={raw:t}};
@@ -122,8 +122,10 @@ beat(); setInterval(beat, 5000); refresh().catch(()=>{}); setInterval(()=>refres
 </script>
 </body></html>`;
 
-export function registerGatewayUi(app: FastifyInstance): void {
-  const handler = async (_req: any, reply: any) => reply.type('text/html; charset=utf-8').send(HTML);
+export function registerGatewayUi(app: FastifyInstance, opts?: { apiKey?: string }): void {
+  const apiKey = opts?.apiKey || 'mac';
+  const rendered = HTML.replace(/__EMO_API_KEY__/g, () => apiKey);
+  const handler = async (_req: any, reply: any) => reply.type('text/html; charset=utf-8').send(rendered);
   app.get('/', handler);
   app.get('/ui', handler);
 }
