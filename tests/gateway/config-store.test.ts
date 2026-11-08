@@ -20,7 +20,8 @@ describe('gateway config store', () => {
   it('defaultGatewayConfig has required display/auth defaults and web providers', () => {
     const cfg = defaultGatewayConfig();
     expect(cfg.gateway.baseUriDisplay).toBe('mac.ai/v1');
-    expect(cfg.gateway.apiKey).toBe('mac');
+    expect(cfg.gateway.apiKey).toBeTruthy();
+    expect(cfg.gateway.apiKey.length).toBeGreaterThanOrEqual(20);
     expect(cfg.gateway.requireApiKey).toBe(true);
     for (const id of ['arena-browser', 'zai-web', 'claude-web', 'tencent-ai-web', 'gemini-web', 'qwen-web'] as const) {
       expect(cfg.providers[id]).toBeDefined();
@@ -32,7 +33,7 @@ describe('gateway config store', () => {
   it('load returns defaults when file is missing', async () => {
     const store = new GatewayConfigStore(file);
     const cfg = await store.load();
-    expect(cfg.gateway.apiKey).toBe('mac');
+    expect(cfg.gateway.apiKey).toBeTruthy();
     expect(cfg.providers['claude-web']).toBeDefined();
   });
 

@@ -364,7 +364,10 @@ export class ProviderManager {
       try {
         const page = context.pages()[0] || await context.newPage();
         await page.goto(this.loginUrl(id), { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-        await new Promise<void>((resolve) => context.on('close', () => resolve()));
+        await Promise.race([
+          new Promise<void>((resolve) => context.on('close', () => resolve())),
+          new Promise<never>((_rej, reject) => setTimeout(() => reject(new Error('Login timed out after 120s. Close the browser window or retry.')), 120_000)),
+        ]);
       } finally {
         try { await context.close(); } catch {}
       }

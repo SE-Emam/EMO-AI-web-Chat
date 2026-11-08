@@ -1,8 +1,13 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import type { GatewayConfigFile, ProviderConfig, WebProviderId } from './types.js';
 import { WEB_PROVIDER_IDS } from './types.js';
+
+function generateApiKey(): string {
+  return randomBytes(24).toString('base64url').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32) || randomBytes(16).toString('hex');
+}
 
 const DEFAULT_FILE = path.join(os.homedir(), '.arena-webbridge', 'gateway.json');
 
@@ -69,7 +74,7 @@ export function defaultGatewayConfig(): GatewayConfigFile {
       port: 8989,
       host: '127.0.0.1',
       baseUriDisplay: 'mac.ai/v1',
-      apiKey: 'mac',
+      apiKey: generateApiKey(),
       requireApiKey: true,
     },
     ui: { heartbeatTimeoutMs: 15000 },

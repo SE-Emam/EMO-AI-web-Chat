@@ -23,7 +23,7 @@ describe('EMO.ai launcher', () => {
     });
     expect(stdout).toMatch(/EMO\.ai|gateway/i);
     expect(stdout).toContain('mac.ai/v1');
-    expect(stdout).toContain('mac');
+    expect(stdout.toLowerCase()).toContain('api');
   }, 45000);
 
   it('has executable scripts/EMO.ai wrapper', async () => {
