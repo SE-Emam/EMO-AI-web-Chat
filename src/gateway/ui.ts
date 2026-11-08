@@ -50,7 +50,8 @@ small{color:var(--muted)}
 async function api(path, opts={}){
   const headers = {...(opts.headers||{})};
   if (opts.body != null && headers['Content-Type'] == null && headers['content-type'] == null) headers['Content-Type']='application/json';
-  const key = localStorage.getItem('emoApiKey') || '__EMO_API_KEY__';
+  const serverKey = '__EMO_API_KEY__';
+  const key = (serverKey && !serverKey.startsWith('__')) ? serverKey : (localStorage.getItem('emoApiKey') || 'mac');
   if (!headers['Authorization'] && !headers['authorization'] && !headers['x-api-key']) headers['Authorization']='Bearer '+key;
   const r=await fetch(path,{...opts,headers});
   const t=await r.text(); let d; try{d=JSON.parse(t)}catch{d={raw:t}};

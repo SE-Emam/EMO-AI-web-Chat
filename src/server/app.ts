@@ -76,7 +76,7 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
       reply.header('X-Frame-Options', 'SAMEORIGIN');
       reply.header('Referrer-Policy', 'no-referrer');
       reply.header('Cache-Control', 'no-store');
-      reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'");
+      reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'");
       if (request.method === 'OPTIONS') return reply.status(204).send();
       return;
     }
@@ -110,6 +110,7 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
     const healthHandler = async () => ({ status: 'ok', service: 'arena-web-api' });
     app.get('/', healthHandler);
   }
+  app.get('/favicon.ico', async (_req, reply) => reply.status(204).send());
   app.get('/health', async () => ({ status: 'ok', service: 'arena-web-api' }));
   app.get('/ready', async (_req, reply) => {
     try {

@@ -31,7 +31,7 @@ NODE=""
 if command -v node >/dev/null 2>&1; then
   NODE="$(command -v node)"
 else
-  for p in "$HOME/.nvm/versions/node/v24.15.0/bin/node" "$HOME/.nvm/versions/node/v22.*/bin/node" /opt/homebrew/bin/node /usr/local/bin/node /usr/bin/node; do
+  for p in "$HOME/.nvm/versions/node/v26.*/bin/node" "$HOME/.nvm/versions/node/v24.*/bin/node" "$HOME/.nvm/versions/node/v22.*/bin/node" "$HOME/.nvm/versions/node"/*/bin/node /opt/homebrew/bin/node /usr/local/bin/node /usr/bin/node; do
     if [ -x "$p" ]; then NODE="$p"; break; fi
   done
 fi
