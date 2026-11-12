@@ -39,7 +39,8 @@ export class RoutingDriver implements ArenaDriver {
     model: string,
     messages: ChatMessage[],
     onChunk?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    sessionKey?: string
   ): Promise<string> {
     if (signal?.aborted) throw new Error('Request was aborted');
     const cleaned = model.trim().toLowerCase();
@@ -52,7 +53,7 @@ export class RoutingDriver implements ArenaDriver {
     let lastError: unknown;
     for (const route of candidates) {
       try {
-        return await route.driver.sendMessage(model, messages, onChunk, signal);
+        return await route.driver.sendMessage(model, messages, onChunk, signal, sessionKey);
       } catch (err: unknown) {
         if (signal?.aborted) {
           throw new Error('Request was aborted');
