@@ -168,6 +168,35 @@ export interface UiSettings {
   discovery?: DiscoverySettings;
   /** The MCP (agent workspace) settings. */
   mcp?: McpSettings;
+  /** The agent <-> web model bridge. */
+  agentBridge?: AgentBridgeSettings;
+}
+
+/**
+ * The bridge between a coding agent's tools and a web model that only sees
+ * them as text.
+ */
+export interface AgentBridgeSettings {
+  /**
+   * Publish the local environment (the approved folders, the tools of the
+   * request) in the system message.
+   *
+   * WHY it is off by default: measured against the live ChatGPT web model,
+   * the extra environment text made the model answer with prose instead of
+   * the tool call. The exact-call block alone is what the model follows.
+   */
+  environmentBlock?: boolean;
+  /**
+   * Repair a model answer that reads like a refusal with a corrective turn
+   * in a clean web chat.
+   */
+  repairRefusals?: boolean;
+  /**
+   * How many times a request may be sent before the gateway accepts a
+   * prose answer. The web model's refusal is a property of the model, not
+   * of the request, so a bounded retry is what turns it into a call.
+   */
+  maxAttempts?: number;
 }
 
 export interface McpSettings {

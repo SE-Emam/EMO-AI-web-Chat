@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -159,7 +160,8 @@ export function defaultGatewayConfig(): GatewayConfigFile {
     },
     ui: {
       heartbeatTimeoutMs: 15000,
-      mcp: { workspaceRoots: [] },
+      mcp: { workspaceRoots: defaultMcpWorkspaceRoots() },
+      agentBridge: { environmentBlock: false, repairRefusals: true, maxAttempts: 3 },
       discovery: {
         enabled: true,
         intervalMs: 12 * 60 * 60 * 1000,
@@ -174,6 +176,20 @@ export function defaultGatewayConfig(): GatewayConfigFile {
     providers,
     routerGroups: [],
   };
+}
+
+/**
+ * The default workspace root for the agent file tools: the user's Desktop
+ * (where their projects live) — narrower than the whole home directory.
+ * Falls back to the home directory when there is no Desktop.
+ */
+export function defaultMcpWorkspaceRoots(): string[] {
+  const home = os.homedir();
+  const desktop = path.join(home, 'Desktop');
+  try {
+    if (fsSync.existsSync(desktop) && fsSync.statSync(desktop).isDirectory()) return [desktop];
+  } catch {}
+  return [home];
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -295,13 +311,23 @@ function mergeConfig(defaults: GatewayConfigFile, raw: unknown): GatewayConfigFi
     },
     ui: {
       ...ui,
+      agentBridge: {
+        environmentBlock: (rawUi.agentBridge as any)?.environmentBlock === true,
+        repairRefusals: (rawUi.agentBridge as any)?.repairRefusals !== false,
+        maxAttempts: Math.max(1, Math.min(4, Number((rawUi.agentBridge as any)?.maxAttempts) || 3)),
+      },
       mcp: {
-        workspaceRoots: Array.isArray((rawUi.mcp as any)?.workspaceRoots)
-          ? ((rawUi.mcp as any).workspaceRoots as unknown[])
-              .filter((r: unknown): r is string => typeof r === 'string' && r.trim().length > 0)
-              .slice(0, 20)
-              .map((r) => r.trim())
-          : [],
+        workspaceRoots: (() => {
+          const stored = Array.isArray((rawUi.mcp as any)?.workspaceRoots)
+            ? ((rawUi.mcp as any).workspaceRoots as unknown[])
+                .filter((r: unknown): r is string => typeof r === 'string' && r.trim().length > 0)
+                .slice(0, 20)
+                .map((r) => r.trim())
+            : [];
+          // An empty list means "never set" — the default root (the user's
+          // Desktop) applies until the user chooses otherwise.
+          return stored.length ? stored : (defaults.ui.mcp?.workspaceRoots ?? defaultMcpWorkspaceRoots());
+        })(),
       },
     },
     providers,

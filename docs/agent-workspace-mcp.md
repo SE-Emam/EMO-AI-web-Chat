@@ -138,7 +138,7 @@ answer: Project Name: Doctor Car – Car Diagnostic Web Application.
 
 ## 5. الاختبارات
 
-`tests/gateway/mcp-server.test.ts` — 22 اختبارًا:
+`tests/gateway/mcp-server.test.ts` — 25 اختبارًا:
 
 * قراءة/كتابة/تعديل/نقل/حذف/بحث/شجرة المشروع.
 * **رفض** المسار خارج مساحة العمل.
@@ -147,6 +147,8 @@ answer: Project Name: Doctor Car – Car Diagnostic Web Application.
 * Forms القبول: `Bearer x` و `Authorization: Bearer x`.
 * `initialize` · `tools/list` · `tools/call` · خطأ JSON-RPC لطريقة غير معروفة.
 * الرفض بلا مفتاح صالح.
+* `instructions` في `initialize` تذكر الجذر الساري · وسوم `annotations` لكل أداة ·
+  بقاء `inputSchema` كما هو.
 
 ---
 
@@ -155,3 +157,47 @@ answer: Project Name: Doctor Car – Car Diagnostic Web Application.
 **جديدة:** `src/server/mcp-server.ts` · `src/server/workspace-tools.ts` · `tests/gateway/mcp-server.test.ts`
 **معدَّلة:** `src/server/gateway-routes.ts` (تسجيل `/mcp`) · `src/gateway/types.ts` (`ui.mcp`) ·
 `src/gateway/config-store.ts` (حفظ الإعدادات) · `src/gateway/ui.ts` (إعدادات MCP الصحيحة + هدف Cline)
+
+---
+
+## 7. تعليمات الخادم ووسوم الأدوات (Server instructions & tool annotations)
+
+### 7.1 `initialize` صار يحمل `instructions`
+
+ردّ `initialize` صار يحمل الحقل القياسي `InitializeResult.instructions` — نصٌّ قصير
+(أقل من 1200 حرف) يبنيه الخادم **حيًّا** في كل طلب من الجذور السارية نفسها
+(`opts.workspaceRoots` تُقرأ في كل طلب، فلا تبقى قيمة قديمة).
+
+محتواه:
+
+* **الجذور المعتمدة بمسارات مطلقة** — أو `None configured` إن لم تُضبط (وعندها
+  يكون مجلد المستخدم هو الجذر الفعلي).
+* **سطر واحد لكل أداة** يوضّح ما تفعله، وأنها لا تعمل إلا داخل الجذور المعتمدة.
+* **قاعدة المسارات** — مسار مطلق داخل جذر معتمد، أو مسار نسبي إلى جذر.
+* **ما لا يُقرأ أبدًا** — ملفات `.env` وملفات الاعتماد: قيم الأسرار ترجع `[redacted]`.
+
+**لماذا؟** النموذج يرى هذه التعليمات مرة واحدة قبل أن يعرف شيئًا عن البوابة؛
+فهي المكان الوحيد الذي تُذكر فيه الجذور وقواعد المسار مرة واحدة بدل تكرارها في
+كل وصف أداة. والنص **واقعي بحت** — يصف ما هو موجود، ولا يدعو النموذج إلى
+«تقييم» الأدوات بنفسه.
+
+### 7.2 `tools/list` صار يحمل `annotations` لكل أداة
+
+كل أداة الآن تُرسل: `name` · `title` (اسم بشري) · `description` · `inputSchema`
+(نفس المخطّط بالضبط، بلا تغيير في أسماء المعاملات) و `annotations`:
+
+| الأداة | `readOnlyHint` | `destructiveHint` |
+|---|---|---|
+| `read_file` · `list_directory` · `list_codebase` · `search_files` | `true` | `false` |
+| `write_file` · `edit_file` | `false` | `true` (يكتب فوق الملف) |
+| `move_file` · `delete_file` | `false` | `true` (يزيل/يستبدل) |
+| `create_directory` | `false` | `false` (يضيف فقط) |
+
+`idempotentHint: true` و `openWorldHint: false` لكل الأدوات (لا شبكة — الملفات
+المحلية فقط).
+
+**لماذا؟** العميل الذي لا يرى `readOnlyHint` يتعامل مع الأداة كأنها **كتابة**
+ويطلب تأكيد المستخدم في كل نداء — فوكيل يضطر للسؤال عن مجرد *قراءة* ملف يصبح
+غير قابل للاستخدام. لذلك تُعلَن الأدوات للقراءة فقط بوضوح. و`destructiveHint`
+صادق فقط حيث يوجد إتلاف فعلي (كتابة فوق، حذف، نقل) — لا أكثر.
+

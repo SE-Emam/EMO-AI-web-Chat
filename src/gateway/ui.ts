@@ -3094,6 +3094,22 @@ img.brand-logo{
                 <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px" data-i18n="mcpServerNameLabel">اسم خادم MCP</label>
                 <input type="text" id="inpMcpServerName" class="form-input" style="direction:ltr;font-family:var(--font-mono);max-width:320px;background:var(--bg-elevated);color:var(--text-muted)" value="emo.web" readonly />
               </div>
+              <div style="flex:1 1 320px;min-width:260px">
+                <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px" data-i18n="mcpWorkspaceLabel">مساحة عمل الوكلاء (المجلدات المسموح قراءتها)</label>
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                  <input type="text" id="inpMcpWorkspace" class="form-input" style="direction:ltr;font-family:var(--font-mono);flex:1 1 220px;min-width:180px" placeholder="/Users/me/Desktop" />
+                  <button type="button" class="btn-sm" onclick="saveMcpWorkspace()" data-i18n="mcpWorkspaceSave">حفظ</button>
+                </div>
+                <div style="font-size:11px;color:var(--text-dim);margin-top:4px" id="mcpWorkspaceHint"></div>
+              </div>
+              <div style="flex:1 1 320px;min-width:260px">
+                <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px" data-i18n="mcpAutoLinkLabel">ربط خادم MCP تلقائيًا</label>
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                  <button type="button" class="btn-sm" onclick="autoConfigureMcpServers()" data-i18n="mcpAutoLinkBtn">ربط كل الوكلاء</button>
+                  <span style="font-size:11px;color:var(--text-dim)" id="mcpAutoLinkHint"></span>
+                </div>
+                <div id="mcpTargetsList" style="font-size:11.5px;color:var(--text-muted);margin-top:6px;line-height:1.7"></div>
+              </div>
               <div style="font-size:11.5px;color:var(--text-muted)" data-i18n="mcpHintAgent">اختر الوكيل والنموذج من الأعلى ليتم تضمينهما في الإعداد.</div>
             </div>
             <div>
@@ -3531,6 +3547,15 @@ const I18N = {
     mcpSetupDesc: "أنشئ إعداد MCP للوكيل المحدد واختر هدف التكامل ثم انسخ ملف/مقتطف الإعداد.",
     mcpTargetLabel: "هدف MCP",
     mcpServerNameLabel: "اسم خادم MCP",
+    mcpWorkspaceLabel: "مساحة عمل الوكلاء (المجلدات المسموح قراءتها)",
+    mcpWorkspaceSave: "حفظ",
+    mcpWorkspaceCurrent: "المسموح حاليًا: {roots}",
+    mcpWorkspaceNone: "لم تُحدَّد مساحة عمل — سيُستخدم مجلد المستخدم.",
+    mcpWorkspaceSaved: "تم تحديث مساحة عمل الوكلاء",
+    mcpAutoLinkLabel: "ربط خادم MCP تلقائيًا في إعدادات الوكلاء",
+    mcpAutoLinkBtn: "ربط كل الوكلاء",
+    mcpAutoLinkRunning: "جارٍ الربط…",
+    mcpAutoLinkDone: "تم ربط {written} وكيل (فشل {failed})",
     mcpConfigTitle: "إعداد MCP الناتج",
     mcpCopyConfig: "نسخ إعداد MCP",
     mcpHintAgent: "اختر الوكيل والنموذج من الأعلى ليتم تضمينهما في الإعداد.",
@@ -4134,6 +4159,15 @@ const I18N = {
     mcpSetupDesc: "Create MCP configuration for the selected agent, choose the integration target, then copy the generated config.",
     mcpTargetLabel: "MCP Target",
     mcpServerNameLabel: "MCP Server Name",
+    mcpWorkspaceLabel: "Agent workspace (the folders the agents may read)",
+    mcpWorkspaceSave: "Save",
+    mcpWorkspaceCurrent: "Currently allowed: {roots}",
+    mcpWorkspaceNone: "No workspace set — the home directory is used.",
+    mcpWorkspaceSaved: "Agent workspace updated",
+    mcpAutoLinkLabel: "Link the MCP server into the agents' own settings",
+    mcpAutoLinkBtn: "Link every agent",
+    mcpAutoLinkRunning: "Linking…",
+    mcpAutoLinkDone: "Linked {written} agent(s) ({failed} failed)",
     mcpConfigTitle: "Generated MCP Configuration",
     mcpCopyConfig: "Copy MCP Config",
     mcpHintAgent: "Select an agent and model above to include them in the MCP configuration.",
@@ -4743,6 +4777,15 @@ const I18N = {
     mcpSetupDesc: "Créez la configuration MCP pour l'agent sélectionné, choisissez la cible, puis copiez la configuration générée.",
     mcpTargetLabel: "Cible MCP",
     mcpServerNameLabel: "Nom du serveur MCP",
+    mcpWorkspaceLabel: "Espace de travail des agents (dossiers lisibles)",
+    mcpWorkspaceSave: "Enregistrer",
+    mcpWorkspaceCurrent: "Autorisé actuellement : {roots}",
+    mcpWorkspaceNone: "Aucun espace défini — le dossier personnel est utilisé.",
+    mcpWorkspaceSaved: "Espace de travail mis à jour",
+    mcpAutoLinkLabel: "Lier le serveur MCP dans les réglages des agents",
+    mcpAutoLinkBtn: "Lier tous les agents",
+    mcpAutoLinkRunning: "Liaison en cours…",
+    mcpAutoLinkDone: "{written} agent(s) lié(s) ({failed} échec(s))",
     mcpConfigTitle: "Configuration MCP générée",
     mcpCopyConfig: "Copier la config MCP",
     mcpHintAgent: "Sélectionnez un agent et un modèle ci-dessus pour les inclure dans la configuration MCP.",
@@ -5339,6 +5382,15 @@ const I18N = {
     mcpSetupDesc: "Создайте конфигурацию MCP для выбранного агента, выберите цель интеграции и скопируйте готовую конфигурацию.",
     mcpTargetLabel: "Цель MCP",
     mcpServerNameLabel: "Имя MCP-сервера",
+    mcpWorkspaceLabel: "Рабочая папка агентов (папки, доступные для чтения)",
+    mcpWorkspaceSave: "Сохранить",
+    mcpWorkspaceCurrent: "Сейчас разрешено: {roots}",
+    mcpWorkspaceNone: "Рабочая папка не задана — используется домашняя папка.",
+    mcpWorkspaceSaved: "Рабочая папка обновлена",
+    mcpAutoLinkLabel: "Подключить MCP-сервер к настройкам агентов",
+    mcpAutoLinkBtn: "Подключить всех агентов",
+    mcpAutoLinkRunning: "Подключение…",
+    mcpAutoLinkDone: "Подключено агентов: {written} (ошибок: {failed})",
     mcpConfigTitle: "Сгенерированная конфигурация MCP",
     mcpCopyConfig: "Копировать конфигурацию MCP",
     mcpHintAgent: "Выберите агента и модель выше, чтобы включить их в конфигурацию MCP.",
@@ -5935,6 +5987,15 @@ const I18N = {
     mcpSetupDesc: "Crea la configuración MCP para el agente seleccionado, elige el destino y copia la configuración generada.",
     mcpTargetLabel: "Destino MCP",
     mcpServerNameLabel: "Nombre del servidor MCP",
+    mcpWorkspaceLabel: "Espacio de trabajo de los agentes (carpetas que pueden leer)",
+    mcpWorkspaceSave: "Guardar",
+    mcpWorkspaceCurrent: "Permitido actualmente: {roots}",
+    mcpWorkspaceNone: "Sin espacio definido — se usa la carpeta personal.",
+    mcpWorkspaceSaved: "Espacio de trabajo actualizado",
+    mcpAutoLinkLabel: "Enlazar el servidor MCP en los ajustes de los agentes",
+    mcpAutoLinkBtn: "Enlazar todos los agentes",
+    mcpAutoLinkRunning: "Enlazando…",
+    mcpAutoLinkDone: "{written} agente(s) enlazado(s) ({failed} fallidos)",
     mcpConfigTitle: "Configuración MCP generada",
     mcpCopyConfig: "Copiar config MCP",
     mcpHintAgent: "Selecciona un agente y un modelo arriba para incluirlos en la configuración MCP.",
@@ -6531,6 +6592,15 @@ const I18N = {
     mcpSetupDesc: "为所选智能体创建 MCP 配置，选择集成目标，然后复制生成的配置。",
     mcpTargetLabel: "MCP 目标",
     mcpServerNameLabel: "MCP 服务器名称",
+    mcpWorkspaceLabel: "智能体工作区（可读取的文件夹）",
+    mcpWorkspaceSave: "保存",
+    mcpWorkspaceCurrent: "当前允许：{roots}",
+    mcpWorkspaceNone: "未设置工作区 —— 将使用主目录。",
+    mcpWorkspaceSaved: "智能体工作区已更新",
+    mcpAutoLinkLabel: "将 MCP 服务器写入各智能体自己的设置",
+    mcpAutoLinkBtn: "链接全部智能体",
+    mcpAutoLinkRunning: "正在链接…",
+    mcpAutoLinkDone: "已链接 {written} 个智能体（失败 {failed}）",
     mcpConfigTitle: "生成的 MCP 配置",
     mcpCopyConfig: "复制 MCP 配置",
     mcpHintAgent: "请在上方选择智能体和模型，以将其包含在 MCP 配置中。",
@@ -8722,6 +8792,8 @@ function resolveMcpTarget(target, ag){
 }
 
 function updateMcpConfigDisplay(){
+  void loadMcpWorkspace();
+  void loadMcpTargets();
   const pre = document.getElementById('dtMcpConfigCode');
   if(!pre) return;
   const ag = getSelectedConnectAgent();
@@ -8827,6 +8899,68 @@ function updateMcpConfigDisplay(){
   }
 
   pre.textContent = cfg;
+}
+
+async function loadMcpWorkspace(){
+  try{
+    const res = await api('/api/gateway/mcp/workspace');
+    const roots = Array.isArray(res.roots) ? res.roots : [];
+    const inp = document.getElementById('inpMcpWorkspace');
+    if(inp && !inp.value) inp.value = roots.join(', ');
+    const hint = document.getElementById('mcpWorkspaceHint');
+    if(hint){
+      hint.textContent = roots.length
+        ? t('mcpWorkspaceCurrent', { roots: roots.join(' · ') })
+        : t('mcpWorkspaceNone');
+    }
+  }catch(e){ /* the endpoint is optional */ }
+}
+
+async function saveMcpWorkspace(){
+  const inp = document.getElementById('inpMcpWorkspace');
+  const hint = document.getElementById('mcpWorkspaceHint');
+  const raw = inp ? inp.value : '';
+  const roots = raw.split(',').map(x => x.trim()).filter(Boolean);
+  try{
+    const res = await api('/api/gateway/mcp/workspace', {method:'PATCH', body: JSON.stringify({roots})});
+    if(hint) hint.textContent = t('mcpWorkspaceCurrent', { roots: (res.roots || []).join(' · ') });
+    showToast(t('mcpWorkspaceSaved'));
+  }catch(e){
+    if(hint) hint.textContent = providerErrorMessage(e);
+    showToast(providerErrorMessage(e), 'error');
+  }
+}
+
+async function loadMcpTargets(){
+  try{
+    const res = await api('/api/gateway/mcp/targets');
+    const list = document.getElementById('mcpTargetsList');
+    if(!list) return;
+    const targets = Array.isArray(res.targets) ? res.targets : [];
+    list.innerHTML = targets.map(t => (t.linked ? '✓ ' : '○ ') + t.name +
+      ' <span style="color:var(--text-dim)">' + (t.path || '') + '</span>').join('<br/>');
+  }catch(e){ /* the endpoint is optional */ }
+}
+
+async function autoConfigureMcpServers(){
+  const hint = document.getElementById('mcpAutoLinkHint');
+  try{
+    if(hint) hint.textContent = t('mcpAutoLinkRunning');
+    const res = await api('/api/gateway/mcp/auto-configure', {method:'POST', body: JSON.stringify({})});
+    const results = Array.isArray(res.results) ? res.results : [];
+    const written = res.written || 0;
+    const failed = res.failed || 0;
+    if(hint) hint.textContent = t('mcpAutoLinkDone', {written: written, failed: failed});
+    const list = document.getElementById('mcpTargetsList');
+    if(list && results.length){
+      list.innerHTML = results.map(r => (r.status === 'written' ? '✓ ' : '✗ ') + r.name + ' — ' + r.message).join('<br/>');
+    }
+    showToast(t('mcpAutoLinkDone', {written: written, failed: failed}));
+    await loadMcpTargets();
+  }catch(e){
+    if(hint) hint.textContent = providerErrorMessage(e);
+    showToast(providerErrorMessage(e), 'error');
+  }
 }
 
 async function copyMcpConfig(btn){

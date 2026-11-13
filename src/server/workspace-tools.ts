@@ -50,11 +50,11 @@ export const WORKSPACE_TOOLS: ToolDefinition[] = [
   {
     name: 'read_file',
     description:
-      'Read a file from the local workspace. Returns its content. Use an absolute path or a path relative to the workspace root.',
+      'Read one file from the local workspace and return its content. The path may be ABSOLUTE inside an approved workspace root (e.g. /Users/me/Desktop/project/README.md) or relative to a root. To inspect a FOLDER, call list_directory FIRST and then call read_file on one of the files it returns. Nothing outside the approved workspace roots can be read — such a path is refused.',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Absolute path, or a path relative to the workspace root.' },
+        path: { type: 'string', description: 'Absolute path inside an approved workspace root, or a path relative to a root.' },
         offset: { type: 'number', description: 'First line to read (1-based).' },
         limit: { type: 'number', description: 'Maximum number of lines to read.' },
       },
@@ -89,10 +89,11 @@ export const WORKSPACE_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'list_directory',
-    description: 'List the entries of a directory (name, type and size).',
+    description:
+      'List the entries of one folder (name, type and size). The path may be ABSOLUTE inside an approved workspace root (e.g. /Users/me/Desktop/project) or relative to a root. Call this FIRST for a folder, then call read_file for the file you need. Nothing outside the approved workspace roots can be listed — such a path is refused.',
     parameters: {
       type: 'object',
-      properties: { path: { type: 'string' } },
+      properties: { path: { type: 'string', description: 'Absolute path inside an approved workspace root, or a path relative to a root.' } },
       required: ['path'],
     },
   },
@@ -198,8 +199,11 @@ export function resolveWorkspacePath(input: string, ctx: WorkspaceToolContext): 
   const realTarget = realPathForCheck(abs);
   const ok = realRoots.some((root) => isInside(realTarget, root));
   if (!ok) {
+    // A typed refusal: the model quotes it back instead of inventing a
+    // broken environment (the same shape CoS uses for its own refusals).
     throw new Error(
-      `Access denied: "${raw}" is outside the allowed workspace (${ctx.roots.join(', ')})`,
+      `OUTSIDE_WORKSPACE: "${raw}" is outside the allowed workspace (${ctx.roots.join(', ')}). ` +
+      `The other tools still work.`,
     );
   }
   return abs;
@@ -234,8 +238,8 @@ export async function callWorkspaceTool(
     case 'read_file': {
       const file = resolveWorkspacePath(str('path'), ctx);
       const st = await statOrNull(file);
-      if (!st) throw new Error(`File not found: ${file}`);
-      if (st.isDirectory()) throw new Error(`${file} is a directory — use list_directory.`);
+      if (!st) throw new Error(`FILE_NOT_FOUND: ${file}`);
+      if (st.isDirectory()) throw new Error(`IS_A_DIRECTORY: ${file} is a directory — use list_directory.`);
       const maxBytes = ctx.maxReadBytes ?? MAX_READ_BYTES;
       const handle = await fsp.open(file, 'r');
       try {
@@ -359,8 +363,8 @@ export async function callWorkspaceTool(
     case 'delete_file': {
       const file = resolveWorkspacePath(str('path'), ctx);
       const st = await statOrNull(file);
-      if (!st) throw new Error(`File not found: ${file}`);
-      if (st.isDirectory()) throw new Error(`${file} is a directory — refusing to delete it recursively.`);
+      if (!st) throw new Error(`FILE_NOT_FOUND: ${file}`);
+      if (st.isDirectory()) throw new Error(`IS_A_DIRECTORY: ${file} is a directory — refusing to delete it recursively.`);
       await fsp.unlink(file);
       return { content: `Deleted ${file}`, structured: { path: file } };
     }
@@ -416,7 +420,7 @@ export async function callWorkspaceTool(
     }
 
     default:
-      throw new Error(`Unknown tool: ${name}`);
+      throw new Error(`TOOL_DISABLED: ${name} is not one of the tools this server offers.`);
   }
 }
 

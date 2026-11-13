@@ -109,7 +109,7 @@ describe('Workspace file tools', () => {
   });
 
   it('rejects an unknown tool', async () => {
-    await expect(callWorkspaceTool('rm_rf', {}, ctx)).rejects.toThrow(/Unknown tool/);
+    await expect(callWorkspaceTool('rm_rf', {}, ctx)).rejects.toThrow(/TOOL_DISABLED: rm_rf/);
   });
 });
 
@@ -158,11 +158,42 @@ describe('MCP server endpoint', () => {
     expect(body.result.capabilities.tools).toBeTruthy();
   });
 
+  it('publishes server instructions that name the approved root', async () => {
+    const res = await app.inject(rpc('initialize'));
+    const instructions = res.json().result.instructions as string;
+    expect(typeof instructions).toBe('string');
+    expect(instructions.length).toBeGreaterThan(0);
+    expect(instructions).toContain(path.resolve(dir));
+    expect(instructions.length).toBeLessThan(1200);
+  });
+
   it('lists the workspace tools', async () => {
     const res = await app.inject(rpc('tools/list'));
     const tools = res.json().result.tools as any[];
     expect(tools.length).toBeGreaterThan(5);
     expect(tools.find((t) => t.name === 'read_file')).toBeTruthy();
+  });
+
+  it('annotates the read-only tools as read-only and the write tools as writes', async () => {
+    const res = await app.inject(rpc('tools/list'));
+    const tools = res.json().result.tools as any[];
+    const byName = (name: string) => tools.find((t) => t.name === name);
+
+    expect(byName('read_file').annotations.readOnlyHint).toBe(true);
+    expect(byName('list_directory').annotations.readOnlyHint).toBe(true);
+    expect(byName('write_file').annotations.readOnlyHint).toBe(false);
+
+    expect(byName('delete_file').annotations.destructiveHint).toBe(true);
+    expect(byName('read_file').annotations.destructiveHint).toBe(false);
+    expect(byName('list_directory').annotations.destructiveHint).toBe(false);
+  });
+
+  it('keeps the tool input schemas intact', async () => {
+    const res = await app.inject(rpc('tools/list'));
+    const tools = res.json().result.tools as any[];
+    const readFile = tools.find((t) => t.name === 'read_file');
+    expect(readFile.inputSchema.properties.path).toBeTruthy();
+    expect(readFile.inputSchema.required).toContain('path');
   });
 
   it('calls read_file and returns the REAL file content', async () => {

@@ -42,8 +42,39 @@ import type { DiscoveredWebModel } from './discovery/types.js';
 import { BulkJobRunner, type BulkJob } from './discovery/job-runner.js';
 import type { DiscoveryScheduler } from './discovery/scheduler.js';
 import { getDiscoveryAdapter } from './discovery/adapters.js';
+import {
+  buildContinuationCall,
+  buildCorrectionMessage,
+  buildRequestHint,
+  buildWorkspaceRootCall,
+  extractAnnouncedTools,
+  looksLikeToolRefusal,
+  repairToolCallArguments,
+  withCorrectionSection,
+  withHintSection,
+  withSystemBlock,
+  type ToolCallBlock,
+} from './agent-tool-bridge.js';
+import { buildContinuationBlock, buildEnvironmentBlock } from './agent-instructions.js';
+import { parseToolCallsFromResponse } from '../server/tool-interpreter.js';
 
 type Factory = (cfg: ProviderConfig) => ArenaDriver | Promise<ArenaDriver>;
+
+/**
+ * A model id may also be written without the colon.
+ *
+ * Some clients split a model reference on "/" (OpenClaw: "<provider>/<model>")
+ * and cannot carry the ":" of our ids, so the colon-free spelling is
+ * accepted as well: "chatgpt-web-default" is "chatgpt-web:default".
+ */
+export function normalizeModelId(model: string): string {
+  const raw = (model || '').trim();
+  const m = /^([a-z][a-z0-9]*(?:-[a-z0-9]+)*)-default$/i.exec(raw);
+  if (!m) return raw;
+  const provider = m[1].toLowerCase();
+  if (!(WEB_PROVIDER_IDS as string[]).includes(provider)) return raw;
+  return `${provider}:default`;
+}
 
 // Web-provider metadata derives names, prefixes, baseUrls and timeouts from
 // WEB_PROVIDERS (src/arena/providers.ts) — no URL literals here.
@@ -1081,7 +1112,7 @@ export class ProviderManager {
   }
 
   findTargetForModel(model: string): { providerId: WebProviderId; targetModel: string } | undefined {
-    const raw = model.trim();
+    const raw = normalizeModelId(model);
     const cleaned = raw.toLowerCase();
     const order: WebProviderId[] = [...WEB_PROVIDER_IDS.filter((id) => id !== 'arena-browser'), 'arena-browser'];
 
@@ -1431,13 +1462,149 @@ export class ProviderManager {
     const t0 = this.now();
     rt.requestCount = (rt.requestCount || 0) + 1;
     try {
-      const response = await rt.driver.sendMessage(targetModel, messages, onChunk, signal, sessionKey);
+      // The web model only sees the agent's tools as TEXT. It frequently
+      // answers with prose instead of the required ```tool_call``` block
+      // ("the file environment is disconnected"), which the local agent then
+      // reports as a broken file environment. Three local guards:
+      //  1. the request carries the facts of the local environment (the
+      //     approved folders, the tools of this request);
+      //  2. it carries the EXACT call to emit, when the task names a local
+      //     path and a matching tool is announced;
+      //  3. a prose answer that looks like a refusal is repaired with one
+      //     corrective turn in the same web chat.
+      const announced = extractAnnouncedTools(messages);
+      const roots = this.workspaceRoots();
+      let prepared = messages;
+      if (announced.length) {
+        // The environment facts are opt-in: measured against the live web
+        // model, the extra text made it answer with prose instead of the
+        // tool call, so the exact-call block stays alone by default.
+        if (this.agentBridgeSetting('environmentBlock')) {
+          prepared = withSystemBlock(prepared, buildEnvironmentBlock(announced, roots));
+        }
+        // A turn that carries a tool result needs the continuation facts:
+        // the result is the client's own output, and the task goes on.
+        if (prepared.some((m) => m?.role === 'tool')) {
+          prepared = withSystemBlock(prepared, buildContinuationBlock(this.continuationFacts(messages)));
+          const next = buildContinuationCall(messages, announced);
+          if (next) prepared = withHintSection(prepared, next, 'next');
+        }
+      }
+      const hint = buildRequestHint(messages);
+      const next = messages.some((m) => m?.role === 'tool') ? buildContinuationCall(messages, announced) : null;
+      const expectedCall = hint || next;
+      if (hint) prepared = withHintSection(prepared, hint);
+      else if (next) prepared = withHintSection(prepared, next, 'next');
+      const response = await rt.driver.sendMessage(targetModel, prepared, onChunk, signal, sessionKey);
+      // The call must run on the client's side: a model that names the
+      // argument differently from the announced schema would otherwise fail
+      // in the agent, not here.
+      const normalized = announced.length ? repairToolCallArguments(response, announced) : response;
+      const repaired = await this.repairToolRefusal({
+        providerId,
+        targetModel,
+        messages: prepared,
+        response: normalized,
+        // The call this request expects — the repair asks for exactly it.
+        expectedCall,
+        // A prose answer after a tool result may be the final answer — but
+        // when the request carries the call it expects, prose is a failure.
+        expectCall: Boolean(expectedCall),
+        signal,
+        sessionKey,
+        driver: rt.driver,
+      });
       rt.latencyMs = Math.max(1, this.now() - t0);
-      return response;
+      return repaired || normalized;
     } catch (err) {
       rt.latencyMs = Math.max(1, this.now() - t0);
       throw err;
     }
+  }
+
+  /** The call before this turn and the output it produced. */
+  private continuationFacts(messages: ChatMessage[]): { call?: string; result?: string } {
+    const tools = (messages || []).filter((m) => m?.role === 'tool');
+    const last = tools[tools.length - 1];
+    const result = typeof last?.content === 'string' ? last.content : undefined;
+    const assistants = (messages || []).filter((m) => m?.role === 'assistant' && Array.isArray((m as any).tool_calls));
+    const calls = (assistants[assistants.length - 1] as any)?.tool_calls;
+    const first = Array.isArray(calls) ? calls[0] : undefined;
+    const call = first?.function
+      ? `${first.function.name}(${typeof first.function.arguments === 'string' ? first.function.arguments : JSON.stringify(first.function.arguments)})`
+      : undefined;
+    return { call, result };
+  }
+
+  /** The folders the agent file tools may touch. */
+  private workspaceRoots(): string[] {
+    const roots = (this.config as any)?.ui?.mcp?.workspaceRoots;
+    return Array.isArray(roots) ? roots.filter((r: unknown): r is string => typeof r === 'string') : [];
+  }
+
+  /** One agent-bridge switch from the gateway settings. */
+  private agentBridgeSetting(key: 'environmentBlock' | 'repairRefusals'): boolean {
+    const bridge = (this.config as any)?.ui?.agentBridge;
+    if (!bridge) return key === 'repairRefusals';
+    return bridge[key] === true;
+  }
+
+  /** How many times a request may be sent before a prose answer is accepted. */
+  private agentBridgeAttempts(): number {
+    const bridge = (this.config as any)?.ui?.agentBridge;
+    const n = Number(bridge?.maxAttempts);
+    return Number.isFinite(n) ? Math.max(1, Math.min(4, n)) : 3;
+  }
+
+  /**
+   * Drives the reply until it carries a tool call.
+   *
+   * A web model that was offered a tool and answered with prose has not
+   * answered the task. The request is sent again in a clean chat with the
+   * call it has to make — a bounded number of times, because the refusal is
+   * a property of the model, not of the request.
+   */
+  private async repairToolRefusal(args: {
+    providerId: WebProviderId;
+    targetModel: string;
+    messages: ChatMessage[];
+    response: string;
+    expectedCall?: ToolCallBlock | null;
+    expectCall?: boolean;
+    signal?: AbortSignal;
+    sessionKey?: string;
+    driver: ArenaDriver;
+  }): Promise<string | null> {
+    const { providerId, targetModel, messages, response, expectedCall, expectCall, signal, sessionKey, driver } = args;
+    // A tool result in the conversation is real evidence: the tools ran, so
+    // the model's answer is an answer — unless the request carries the call
+    // it expects, and then prose is a failure to act.
+    if (!expectCall && (messages || []).some((m) => m?.role === 'tool')) return null;
+    if (!this.agentBridgeSetting('repairRefusals')) return null;
+    if (!response || typeof response !== 'string') return null;
+    if (parseToolCallsFromResponse(response).hasToolCalls) return null;
+    if (!looksLikeToolRefusal(response)) return null;
+
+    const tools = extractAnnouncedTools(messages);
+    if (!tools.length) return null;
+    const maxAttempts = this.agentBridgeAttempts();
+    let current = response;
+    for (let attempt = 1; attempt < maxAttempts; attempt++) {
+      // The call this request expects is asked for again; without one the
+      // workspace root is the starting point.
+      const call = expectedCall || buildWorkspaceRootCall(tools, this.workspaceRoots());
+      const phase: 'first' | 'next' = messages.some((m) => m?.role === 'tool') ? 'next' : 'first';
+      const correction = buildCorrectionMessage(call, tools, attempt, phase);
+      // The correction goes into the SYSTEM message: a tool_call block inside
+      // a user message is read by the web model as quoted text and ignored.
+      const correctionMessages = withCorrectionSection(messages, correction);
+      console.log(`[${PROVIDER_META[providerId].name}] The model answered with prose instead of a tool call — corrective turn ${attempt}/${maxAttempts - 1}.`);
+      current = await driver.sendMessage(targetModel, correctionMessages, undefined, signal, sessionKey);
+      if (parseToolCallsFromResponse(current || '').hasToolCalls) return current;
+      if (!looksLikeToolRefusal(current || '')) return null;
+    }
+    // The correction produced prose too: keep the original answer.
+    return null;
   }
 
   private async sendToRouterTarget(target: RouterGroupTarget, messages: ChatMessage[], onChunk?: (chunk: string) => void, signal?: AbortSignal, sessionKey?: string): Promise<string> {

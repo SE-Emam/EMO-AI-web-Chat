@@ -8,6 +8,7 @@ import type { ProviderManager } from '../gateway/provider-manager.js';
 import type { UsageTracker } from '../gateway/usage-tracker.js';
 import { isValidApiKey } from '../gateway/security.js';
 import { registerMcpServer } from './mcp-server.js';
+import { configureMcpServers, mcpTargets } from '../gateway/mcp-auto-config.js';
 
 function isProviderId(v: string): v is WebProviderId {
   return (WEB_PROVIDER_IDS as string[]).includes(v);
@@ -163,6 +164,13 @@ async function detectLocalAgents(manager?: ProviderManager, force = false): Prom
   const kiroPath = matchBin('kiro', 'kilo') || matchApp('kiro', 'kilo');
   const pythonPath = matchBin('python3', 'python') || undefined;
 
+  // OpenClaw (the multi-channel gateway/agent runtime): the binary, its
+  // config or its state database are the evidence — a config file alone is
+  // not proof of an install, but the state database is.
+  const openclawConf = path.join(home, '.openclaw/openclaw.json');
+  const openclawState = existingFile(path.join(home, '.openclaw/state/openclaw.sqlite'));
+  const openclawPath = matchBin('openclaw') || existingFile(path.join(home, '.openclaw/bin/openclaw')) || matchApp('openclaw');
+
   // Continue / Roo Code are VS Code extensions: real evidence = extension dir in ~/.vscode/extensions
   const continuePath = matchBin('continue') || findVscodeExtension(['continue.continue']);
   const rooPath = matchBin('roo', 'roo-code') || findVscodeExtension(['rooveterinaryinc.roo-cline']);
@@ -215,6 +223,26 @@ async function detectLocalAgents(manager?: ProviderManager, force = false): Prom
       path: opencodePath,
       configPath: fs.existsSync(opencodeConf) ? opencodeConf : undefined,
       isConfigured: opencodeConfigured,
+      canAutoConfigure: true,
+      protocol: 'openai',
+      category: 'cli',
+    },
+    {
+      id: 'openclaw',
+      name: 'OpenClaw',
+      icon: '🐾',
+      installed: Boolean(openclawPath || openclawState),
+      path: openclawPath,
+      configPath: fs.existsSync(openclawConf) ? openclawConf : undefined,
+      isConfigured: (() => {
+        try {
+          if (!fs.existsSync(openclawConf)) return false;
+          const txt = fs.readFileSync(openclawConf, 'utf8');
+          return txt.includes(':8989') || txt.includes('emo.web');
+        } catch {
+          return false;
+        }
+      })(),
       canAutoConfigure: true,
       protocol: 'openai',
       category: 'cli',
@@ -544,11 +572,18 @@ async function detectLocalAgents(manager?: ProviderManager, force = false): Prom
   return list;
 }
 
-async function autoConfigureAgent(
+/**
+ * Writes an agent's own configuration so it talks to this gateway.
+ *
+ * `home` is overridable so the whole matrix can be verified against a
+ * temporary directory instead of the user's real agent settings.
+ */
+export async function autoConfigureAgent(
   agentId: string,
   manager: ProviderManager,
   port = 8989,
-  apiKey = 'emo.web'
+  apiKey = 'emo.web',
+  home: string = os.homedir()
 ): Promise<{
   success: boolean;
   message: string;
@@ -556,7 +591,6 @@ async function autoConfigureAgent(
   backupPath?: string;
   configuredSettings?: Record<string, unknown>;
 }> {
-  const home = os.homedir();
   const origin = `http://127.0.0.1:${port}`;
   const baseUrlV1 = `${origin}/v1`;
 
@@ -590,6 +624,53 @@ async function autoConfigureAgent(
       return {
         success: true,
         message: 'تم ربط وتفعيل OpenCode بنجاح في opencode.json عبر emo-gateway',
+        configPath: confPath,
+        backupPath: bak,
+        configuredSettings: { baseURL: baseUrlV1, apiKey },
+      };
+    }
+
+    case 'openclaw': {
+      // OpenClaw reads ~/.openclaw/openclaw.json (JSON5 — plain JSON is
+      // valid JSON5) and refuses to start on an unknown key, so only the
+      // documented keys are written and the rest of the file is kept.
+      const confPath = path.join(home, '.openclaw/openclaw.json');
+      let data: any = {};
+      try {
+        if (fs.existsSync(confPath)) {
+          data = JSON.parse(fs.readFileSync(confPath, 'utf8'));
+        }
+      } catch {}
+      if (!data || typeof data !== 'object') data = {};
+
+      const models = [
+        { id: 'chatgpt-web-default', name: 'ChatGPT Web' },
+        { id: 'claude-web-default', name: 'Claude Web' },
+        { id: 'gemini-web-default', name: 'Gemini Web' },
+        { id: 'deepseek-web-default', name: 'DeepSeek Web' },
+        { id: 'zai-web-default', name: 'Z.AI Web' },
+      ];
+      data.models = data.models && typeof data.models === 'object' ? data.models : {};
+      data.models.mode = 'merge';
+      data.models.providers = data.models.providers && typeof data.models.providers === 'object' ? data.models.providers : {};
+      data.models.providers.emo = {
+        baseUrl: baseUrlV1,
+        apiKey: apiKey,
+        api: 'openai-completions',
+        name: 'EMO.ai Gateway',
+        models,
+      };
+      data.agents = data.agents && typeof data.agents === 'object' ? data.agents : {};
+      data.agents.defaults = data.agents.defaults && typeof data.agents.defaults === 'object' ? data.agents.defaults : {};
+      data.agents.defaults.model = data.agents.defaults.model && typeof data.agents.defaults.model === 'object'
+        ? data.agents.defaults.model
+        : {};
+      data.agents.defaults.model.primary = 'emo/chatgpt-web-default';
+
+      const bak = await safeWriteWithBackup(confPath, JSON.stringify(data, null, 2));
+      return {
+        success: true,
+        message: 'تم ربط OpenClaw بنجاح في openclaw.json عبر مزوّد emo (openai-completions)',
         configPath: confPath,
         backupPath: bak,
         configuredSettings: { baseURL: baseUrlV1, apiKey },
@@ -654,7 +735,11 @@ async function autoConfigureAgent(
       };
 
       let bak: string | undefined;
-      if (yamlText.includes('custom_providers:')) {
+      if (!yamlText.trim()) {
+        // A fresh install has no config yet: the provider block is created.
+        yamlText = `custom_providers: [${JSON.stringify(newProvider)}]\n`;
+        bak = await safeWriteWithBackup(confPath, yamlText);
+      } else if (yamlText.includes('custom_providers:')) {
         yamlText = yamlText.replace(/custom_providers:\s*\[(.*?)\]/s, (match) => {
           try {
             const arr = JSON.parse(match.replace(/^custom_providers:\s*/, ''));
@@ -697,6 +782,23 @@ async function autoConfigureAgent(
           data = JSON.parse(fs.readFileSync(confPath, 'utf8'));
         }
       } catch {}
+      if (!data['model-provider']) {
+        // A fresh install has no provider list yet: it is created with the
+        // gateway as the active OpenAI-compatible provider.
+        data['model-provider'] = JSON.stringify({
+          state: {
+            providers: [
+              {
+                active: true,
+                persist: true,
+                provider: 'openai',
+                base_url: baseUrlV1,
+                settings: [{ key: 'api_key', controller_props: { value: apiKey } }],
+              },
+            ],
+          },
+        });
+      }
       if (data && typeof data['model-provider'] === 'string') {
         try {
           const mp = JSON.parse(data['model-provider']);
@@ -773,6 +875,34 @@ async function autoConfigureAgent(
       return {
         success: true,
         message: 'تم تحديث إعدادات VS Code لإضافات Cline و Continue و Roo Code بنجاح',
+        configPath: confPath,
+        backupPath: bak,
+        configuredSettings: { baseURL: baseUrlV1, apiKey },
+      };
+    }
+
+    case 'copilot': {
+      // GitHub Copilot Chat is a VS Code extension: it reads the same user
+      // settings, and its MCP registry is the "mcp.servers" section that
+      // the MCP auto-configure writes.
+      const confPath = path.join(home, 'Library/Application Support/Code/User/settings.json');
+      let data: any = {};
+      try {
+        if (fs.existsSync(confPath)) {
+          data = JSON.parse(fs.readFileSync(confPath, 'utf8'));
+        }
+      } catch {}
+      if (!data || typeof data !== 'object') data = {};
+      // Copilot Chat talks to an OpenAI-compatible endpoint through a custom
+      // model entry; the API key travels with it.
+      data['github.copilot.chat.customOllamaModels'] = [
+        { name: 'EMO.ai Gateway', endpoint: baseUrlV1, model: 'chatgpt-web:default' },
+      ];
+      data['github.copilot.chat.ollamaApiKey'] = apiKey;
+      const bak = await safeWriteWithBackup(confPath, JSON.stringify(data, null, 4));
+      return {
+        success: true,
+        message: 'تم تحديث إعدادات VS Code لتضمين GitHub Copilot Chat',
         configPath: confPath,
         backupPath: bak,
         configuredSettings: { baseURL: baseUrlV1, apiKey },
@@ -1229,7 +1359,8 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
   registerMcpServer(app, {
     isValidApiKey: (key) => isValidApiKey(key, opts.manager.getValidApiKeys()),
     apiKey: opts.getGatewayConfig().gateway.apiKey,
-    workspaceRoots: opts.getGatewayConfig().ui?.mcp?.workspaceRoots,
+    // Read LIVE so a change of the workspace root applies immediately.
+    workspaceRoots: () => opts.getGatewayConfig().ui?.mcp?.workspaceRoots || [],
   });
 
   app.post('/api/gateway/heartbeat', async () => {
@@ -1563,6 +1694,96 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
       return reply.status(503).send({ error: { message: 'Connection checks are not enabled on this gateway.' } });
     }
     return { started: true, job };
+  });
+
+  /**
+   * The workspace roots the agent file tools may touch.
+   * Changing them applies immediately (the MCP server reads them per request).
+   */
+  app.get('/api/gateway/mcp/workspace', async () => {
+    const cfg = opts.getGatewayConfig();
+    return {
+      roots: cfg.ui?.mcp?.workspaceRoots || [],
+      defaultRoot: (cfg.ui?.mcp?.workspaceRoots || [])[0] || null,
+    };
+  });
+
+  /**
+   * The agents that support MCP and the file each of them reads.
+   * The UI uses it to show what is already linked.
+   */
+  app.get('/api/gateway/mcp/targets', async () => {
+    const cfg = opts.getGatewayConfig();
+    const port = cfg.gateway.port || 8989;
+    const targets = mcpTargets().map((t) => {
+      let linked = false;
+      try {
+        if (fs.existsSync(t.file)) {
+          const raw = JSON.parse(fs.readFileSync(t.file, 'utf8'));
+          linked = Boolean(
+            raw?.mcp?.servers?.['emo.web'] ||
+              raw?.mcpServers?.['emo.web'] ||
+              raw?.context_servers?.['emo.web'] ||
+              (Array.isArray(raw?.mcpServers) && raw.mcpServers.some((s: any) => s?.name === 'emo.web')) ||
+              raw?.mcp?.servers?.['emo.web'],
+          );
+        }
+      } catch {
+        linked = false;
+      }
+      return { id: t.id, name: t.name, path: t.file, linked };
+    });
+    return { targets, mcpUrl: `http://127.0.0.1:${port}/mcp` };
+  });
+
+  /**
+   * Writes the MCP server into the agents' OWN configuration files — the
+   * step that turns "here is a snippet" into "the agent has the tools".
+   */
+  app.post('/api/gateway/mcp/auto-configure', async (req, reply) => {
+    const body = (req.body || {}) as { agentIds?: unknown };
+    const cfg = opts.getGatewayConfig();
+    const port = cfg.gateway.port || 8989;
+    const apiKey = cfg.gateway.apiKey || 'emo.web';
+    const only = Array.isArray(body.agentIds)
+      ? body.agentIds.filter((a): a is string => typeof a === 'string' && a.trim().length > 0)
+      : undefined;
+    try {
+      const agents = await detectLocalAgents(opts.manager, false);
+      const installed = agents.filter((a) => a.installed || a.isCustom).map((a) => a.id);
+      const out = configureMcpServers({
+        mcpUrl: `http://127.0.0.1:${port}/mcp`,
+        apiKey,
+        only,
+        installed,
+      });
+      return { ...out, success: out.failed === 0 };
+    } catch (e) {
+      return reply.status(500).send({
+        success: false,
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+  });
+
+  app.patch('/api/gateway/mcp/workspace', async (req, reply) => {
+    const body = (req.body || {}) as { roots?: unknown };
+    if (!Array.isArray(body.roots)) {
+      return reply.status(400).send({ error: { message: 'roots must be an array of directories' } });
+    }
+    const roots = body.roots
+      .filter((r): r is string => typeof r === 'string' && r.trim().length > 0)
+      .map((r) => path.resolve(r.trim()))
+      .slice(0, 20);
+    const invalid = roots.filter((r) => !fs.existsSync(r) || !fs.statSync(r).isDirectory());
+    if (invalid.length) {
+      return reply.status(400).send({ error: { message: `Not a directory: ${invalid.join(', ')}` } });
+    }
+    const cfg = opts.getGatewayConfig();
+    cfg.ui = cfg.ui || ({} as any);
+    cfg.ui.mcp = { ...(cfg.ui.mcp || {}), workspaceRoots: roots };
+    await opts.manager.saveConfig();
+    return { ok: true, roots };
   });
 
   /** The progress of the running (or last) bulk job. */
