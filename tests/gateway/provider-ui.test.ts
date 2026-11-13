@@ -427,6 +427,60 @@ describe('Providers & Models page — provider card UI (real gateway UI script)'
     expect(badge.style.display).not.toBe('none');
   });
 
+  it('asks for consent BEFORE a visible browser is opened (approve / postpone)', async () => {
+    // The server reports that a visible browser is needed for this provider.
+    ui.setFetchHandler(() => ({
+      ok: true,
+      status: 200,
+      json: {
+        ok: false,
+        report: {
+          status: 'failed',
+          failureReason: 'model_picker_not_found',
+          needsHeadedConsent: true,
+          detail: 'a visible browser window is needed',
+          models: [],
+          changes: [],
+        },
+      },
+    }));
+    ui.renderProvidersGrid([providerState('claude-web')]);
+    await ui.click('discoverModels', 'claude-web');
+
+    // The consent dialog is shown with both answers.
+    const modal = await ui.ctx.document.getElementById('browserConsentModal');
+    expect((modal as any).style.display).toBe('flex');
+    // The wording the user sees.
+    expect(ui.ctx.t('consentTitle')).toContain('سيتم فتح المتصفح لتحديث النماذج');
+    expect(ui.ctx.t('consentApprove')).toBe('موافق');
+    expect(ui.ctx.t('consentDefer')).toBe('تأجيل لاحقًا');
+    // The dialog really exists in the page markup with both buttons.
+    const fs = await import('node:fs');
+    const page = fs.readFileSync(new URL('../../src/gateway/ui.ts', import.meta.url), 'utf8');
+    expect(page).toContain('id="browserConsentModal"');
+    expect(page).toContain('onclick="answerBrowserConsent(true)"');
+    expect(page).toContain('onclick="answerBrowserConsent(false)"');
+
+    // Answering "postpone" closes it and opens nothing.
+    await ui.ctx.answerBrowserConsent(false);
+    const after = await ui.ctx.document.getElementById('browserConsentModal');
+    expect((after as any).style.display).toBe('none');
+  });
+
+  it('never opens a visible browser without an explicit approval', async () => {
+    const calls: any[] = [];
+    ui.setFetchHandler((call) => {
+      calls.push(call);
+      return { ok: true, status: 200, json: { ok: true, report: { status: 'discovered', models: [], changes: [] } } };
+    });
+    ui.renderProvidersGrid([providerState('gemini-web')]);
+    await ui.click('discoverModels', 'gemini-web');
+    // The scan request carries NO headed permission by default.
+    const discoverCall = calls.find((c) => c.url.includes('/discover'));
+    expect(discoverCall).toBeTruthy();
+    expect(discoverCall?.body?.allowHeadedFallback).toBeFalsy();
+  });
+
   it('prevents a double click from starting a second operation on the same card', async () => {
     ui.renderProvidersGrid([providerState('gemini-web')]);
     const releases: Array<() => void> = [];

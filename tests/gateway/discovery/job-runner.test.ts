@@ -42,6 +42,52 @@ describe('Bulk job runner (scan everything)', () => {
     expect(done.results[1].ok).toBe(true);
   });
 
+  it('waits for the consent before opening anything', async () => {
+    let ran = 0;
+    const runner = new BulkJobRunner({
+      runOne: async () => {
+        ran++;
+        return { ok: true, status: 'discovered' };
+      },
+      now: () => 1_700_000_000_000,
+    });
+    const job = runner.start('discover', ['a', 'b'], { requireConsent: true });
+    expect(job.awaitingConsent).toBe(true);
+    expect(job.running).toBe(true);
+    await new Promise((r) => setTimeout(r, 20));
+    // NOTHING ran before the consent.
+    expect(ran).toBe(0);
+    expect(runner.approve()).toBe(true);
+    for (let i = 0; i < 50 && runner.isRunning(); i++) await new Promise((r) => setTimeout(r, 5));
+    expect(ran).toBe(2);
+    expect(runner.get()!.awaitingConsent).toBe(false);
+  });
+
+  it('postpones the job when the user declines', async () => {
+    let ran = 0;
+    const runner = new BulkJobRunner({
+      runOne: async () => {
+        ran++;
+        return { ok: true, status: 'discovered' };
+      },
+      now: () => 1_700_000_000_000,
+    });
+    runner.start('discover', ['a'], { requireConsent: true });
+    expect(runner.defer()).toBe(true);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(ran).toBe(0);
+    expect(runner.get()!.deferred).toBe(true);
+    expect(runner.get()!.awaitingConsent).toBe(false);
+  });
+
+  it('does not replace a pending job with a new one', async () => {
+    const runner = new BulkJobRunner({ runOne: async () => ({ ok: true, status: 'discovered' }), now: () => 1 });
+    const first = runner.start('discover', ['a'], { requireConsent: true });
+    const second = runner.start('discover', ['b'], { requireConsent: true });
+    expect(second.id).toBe(first.id);
+    expect(second.total).toBe(1);
+  });
+
   it('does not start a second job while one is running', async () => {
     let release: (() => void) | null = null;
     const gate = new Promise<void>((r) => {

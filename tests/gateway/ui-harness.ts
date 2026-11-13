@@ -24,6 +24,7 @@ export type FetchHandler = (call: FetchCall) => FetchReply | Promise<FetchReply>
 class FakeElement {
   tagName: string;
   id = '';
+  private _html = '';
   textContent = '';
   className = '';
   value = '';
@@ -53,6 +54,11 @@ class FakeElement {
    */
   get innerHTML(): string {
     return this._html;
+  }
+
+  /** The visible text of the element (tags stripped). */
+  get innerText(): string {
+    return this._html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   }
 
   set innerHTML(value: string) {

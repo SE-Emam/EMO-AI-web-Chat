@@ -1248,6 +1248,48 @@ label.model-row.model-stale code{color:var(--text-dim);text-decoration:line-thro
 .job-failed{color:var(--danger)}
 .job-done{color:var(--success)}
 .job-error{color:var(--danger)}
+/* Consent dialog before a visible browser window is opened */
+.consent-overlay{
+  position:fixed;
+  inset:0;
+  z-index:120;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:20px;
+  background:rgba(0,0,0,.62);
+  backdrop-filter:blur(3px);
+}
+.consent-dialog{
+  width:min(460px,100%);
+  border:1px solid var(--border);
+  border-radius:14px;
+  background:var(--card-bg);
+  box-shadow:var(--shadow-lg,0 24px 60px rgba(0,0,0,.45));
+  padding:22px 22px 18px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.consent-icon{font-size:26px;line-height:1}
+.consent-dialog h3{margin:0;font-size:15px;font-weight:700;color:var(--text)}
+.consent-dialog p{margin:0;font-size:12.5px;line-height:1.7;color:var(--text-muted)}
+.consent-points{
+  margin:2px 0 0;
+  padding-inline-start:18px;
+  font-size:11.5px;
+  line-height:1.8;
+  color:var(--text-dim);
+}
+.consent-actions{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  margin-top:8px;
+  padding-top:12px;
+  border-top:1px solid var(--border-subtle);
+}
+.consent-actions .btn-primary{flex:0 0 auto}
 /* Freshness dot: green = just checked, amber = aging, grey = stale */
 .freshness-dot{
   display:inline-block;
@@ -2636,6 +2678,24 @@ img.brand-logo{
         </button>
       </div>
       <div class="providers-job-strip" id="providersJobStrip" style="display:none"></div>
+
+      <!-- Consent: a visible browser window is opened to read the model list -->
+      <div class="consent-overlay" id="browserConsentModal" style="display:none">
+        <div class="consent-dialog" role="dialog" aria-modal="true" aria-labelledby="browserConsentTitle">
+          <div class="consent-icon" aria-hidden="true">🌐</div>
+          <h3 id="browserConsentTitle" data-i18n="consentTitle">سيتم فتح المتصفح لتحديث النماذج</h3>
+          <p data-i18n="consentBody">لتحديث قائمة نماذج المزوّدات من موقعه، يجب فتح نافذة متصفح مرئية. لن يتم إرسال أي رسالة ولن تُعدَّل ملفات تعريف الدخول.</p>
+          <ul class="consent-points">
+            <li data-i18n="consentPoint1">تُقرأ قائمة النماذج فقط (لا تُرسل أي رسالة)</li>
+            <li data-i18n="consentPoint2">لا تُعدَّل الكوكيز ولا يتم تسجيل الخروج</li>
+            <li data-i18n="consentPoint3">يمكن إيقاف الفحص في أي وقت</li>
+          </ul>
+          <div class="consent-actions">
+            <button type="button" class="btn-primary" id="btnConsentApprove" onclick="answerBrowserConsent(true)" data-i18n="consentApprove">موافق</button>
+            <button type="button" class="btn-sm" id="btnConsentDefer" onclick="answerBrowserConsent(false)" data-i18n="consentDefer">تأجيل لاحقًا</button>
+          </div>
+        </div>
+      </div>
       <div id="modelNotificationsPanel" class="model-notif-panel" style="display:none"></div>
 
       <div class="providers-grid" id="providersGrid"></div>
@@ -3744,6 +3804,15 @@ const I18N = {
     btnWorking: "جارٍ التنفيذ…",
     notifCenterTitle: "تغييرات النماذج",
     btnSweepDiscoverAll: "اكتشاف كل المزودات",
+    consentTitle: "سيتم فتح المتصفح لتحديث النماذج",
+    consentBody: "لتحديث قائمة نماذج المزوّدات من موقعه، يجب فتح نافذة متصفح مرئية. لن يتم إرسال أي رسالة ولن تُعدَّل ملفات تعريف الدخول.",
+    consentPoint1: "تُقرأ قائمة النماذج فقط (لا تُرسل أي رسالة)",
+    consentPoint2: "لا تُعدَّل الكوكيز ولا يتم تسجيل الخروج",
+    consentPoint3: "يمكن إيقاف الفحص في أي وقت",
+    consentApprove: "موافق",
+    consentDefer: "تأجيل لاحقًا",
+    consentDeferredToast: "تم تأجيل تحديث النماذج — يمكنك تشغيله لاحقًا من الزر",
+    cardResultNeedsVisibleBrowser: "يحتاج هذا المزوّد متصفحًا مرئيًا — في انتظار موافقتك",
     btnSweepConnectAll: "فحص كل الاتصالات",
     btnSweepAllHint: "يفحص كل مزوّد بالترتيب (قد يستغرق عدة دقائق)",
     btnCheckAllHint: "يفحص اتصال كل مزوّد بالتوازي مع شريط تقدّم",
@@ -4335,6 +4404,15 @@ const I18N = {
     btnWorking: "Working…",
     notifCenterTitle: "Model changes",
     btnSweepDiscoverAll: "Discover all providers",
+    consentTitle: "A browser window will open to update the models",
+    consentBody: "To refresh a provider's model list from its own website a visible browser window is needed. No message is sent and no login data is changed.",
+    consentPoint1: "Only the model list is read (no message is sent)",
+    consentPoint2: "No cookie is modified and nobody is logged out",
+    consentPoint3: "The scan can be stopped at any time",
+    consentApprove: "Approve",
+    consentDefer: "Postpone",
+    consentDeferredToast: "Model update postponed — you can start it later from the button",
+    cardResultNeedsVisibleBrowser: "This provider needs a visible browser — waiting for your approval",
     btnSweepConnectAll: "Check all connections",
     btnSweepAllHint: "Scans every provider in turn (may take several minutes)",
     btnCheckAllHint: "Checks every provider connection with a progress bar",
@@ -4929,6 +5007,15 @@ const I18N = {
     btnWorking: "En cours…",
     notifCenterTitle: "Changements de modèles",
     btnSweepDiscoverAll: "Découvrir tous les fournisseurs",
+    consentTitle: "Une fenêtre de navigateur va s'ouvrir pour mettre à jour les modèles",
+    consentBody: "Pour actualiser la liste des modèles d'un fournisseur depuis son site, une fenêtre de navigateur visible est nécessaire. Aucun message n'est envoyé et aucune donnée de connexion n'est modifiée.",
+    consentPoint1: "Seule la liste des modèles est lue (aucun message envoyé)",
+    consentPoint2: "Aucun cookie n'est modifié et personne n'est déconnecté",
+    consentPoint3: "L'analyse peut être arrêtée à tout moment",
+    consentApprove: "Approuver",
+    consentDefer: "Reporter",
+    consentDeferredToast: "Mise à jour reportée — vous pouvez la lancer plus tard depuis le bouton",
+    cardResultNeedsVisibleBrowser: "Ce fournisseur a besoin d'un navigateur visible — en attente de votre accord",
     btnSweepConnectAll: "Vérifier toutes les connexions",
     btnSweepAllHint: "Analyse chaque fournisseur l'un après l'autre (plusieurs minutes)",
     btnCheckAllHint: "Vérifie la connexion de chaque fournisseur avec une barre de progression",
@@ -5513,6 +5600,15 @@ const I18N = {
     btnWorking: "Выполняется…",
     notifCenterTitle: "Изменения моделей",
     btnSweepDiscoverAll: "Найти модели у всех провайдеров",
+    consentTitle: "Откроется окно браузера для обновления моделей",
+    consentBody: "Чтобы обновить список моделей провайдера с его сайта, нужно видимое окно браузера. Сообщения не отправляются, данные входа не изменяются.",
+    consentPoint1: "Читается только список моделей (сообщения не отправляются)",
+    consentPoint2: "Куки не изменяются и никто не выходит из аккаунта",
+    consentPoint3: "Проверку можно остановить в любой момент",
+    consentApprove: "Разрешить",
+    consentDefer: "Отложить",
+    consentDeferredToast: "Обновление отложено — его можно запустить позже кнопкой",
+    cardResultNeedsVisibleBrowser: "Этому провайдеру нужен видимый браузер — ожидаем вашего решения",
     btnSweepConnectAll: "Проверить все подключения",
     btnSweepAllHint: "Проверяет каждого провайдера по очереди (может занять несколько минут)",
     btnCheckAllHint: "Проверяет подключение каждого провайдера с индикатором прогресса",
@@ -6097,6 +6193,15 @@ const I18N = {
     btnWorking: "Trabajando…",
     notifCenterTitle: "Cambios de modelos",
     btnSweepDiscoverAll: "Obtener modelos de todos los proveedores",
+    consentTitle: "Se abrirá una ventana del navegador para actualizar los modelos",
+    consentBody: "Para actualizar la lista de modelos de un proveedor desde su propio sitio hace falta una ventana de navegador visible. No se envía ningún mensaje ni se modifican los datos de acceso.",
+    consentPoint1: "Solo se lee la lista de modelos (no se envía ningún mensaje)",
+    consentPoint2: "No se modifica ninguna cookie ni se cierra ninguna sesión",
+    consentPoint3: "El escaneo puede detenerse en cualquier momento",
+    consentApprove: "Aprobar",
+    consentDefer: "Posponer",
+    consentDeferredToast: "Actualización pospuesta — puedes iniciarla más tarde con el botón",
+    cardResultNeedsVisibleBrowser: "Este proveedor necesita un navegador visible — esperando tu aprobación",
     btnSweepConnectAll: "Comprobar todas las conexiones",
     btnSweepAllHint: "Analiza cada proveedor por turnos (puede tardar varios minutos)",
     btnCheckAllHint: "Comprueba la conexión de cada proveedor con barra de progreso",
@@ -6681,6 +6786,15 @@ const I18N = {
     btnWorking: "执行中…",
     notifCenterTitle: "模型变更",
     btnSweepDiscoverAll: "获取所有提供方的模型",
+    consentTitle: "将打开浏览器窗口以更新模型",
+    consentBody: "要从提供方自己的网站刷新模型列表，需要一个可见的浏览器窗口。不会发送任何消息，也不会修改登录信息。",
+    consentPoint1: "只读取模型列表（不会发送任何消息）",
+    consentPoint2: "不会修改 Cookie，也不会退出登录",
+    consentPoint3: "扫描可随时停止",
+    consentApprove: "同意",
+    consentDefer: "稍后再说",
+    consentDeferredToast: "模型更新已延后 —— 你可以稍后用按钮启动",
+    cardResultNeedsVisibleBrowser: "该提供方需要可见的浏览器 —— 等待你的同意",
     btnSweepConnectAll: "检查所有连接",
     btnSweepAllHint: "依次扫描每个提供方（可能需要数分钟）",
     btnCheckAllHint: "带进度条检查每个提供方的连接",
@@ -7293,12 +7407,101 @@ let modelNotifFilter = '';
 // ---------------------------------------------------------------------------
 let bulkJobTimer = null;
 
-async function startBulkJob(kind){
+// ---------------------------------------------------------------------------
+// Consent before a visible browser is opened
+// ---------------------------------------------------------------------------
+let consentPendingAction = null;
+
+function showBrowserConsent(action){
+  consentPendingAction = action || null;
+  const modal = document.getElementById('browserConsentModal');
+  if(modal) modal.style.display = 'flex';
+}
+
+function hideBrowserConsent(){
+  consentPendingAction = null;
+  const modal = document.getElementById('browserConsentModal');
+  if(modal) modal.style.display = 'none';
+}
+
+async function answerBrowserConsent(approved){
+  const action = consentPendingAction;
+  hideBrowserConsent();
+  try{
+    await api('/api/gateway/discovery/consent', {method:'POST', body: JSON.stringify({approved: approved})});
+  }catch(e){ /* the sweep simply stays pending */ }
+  if(!approved){
+    showToast(t('consentDeferredToast'));
+    return;
+  }
+  if(action && action.kind === 'sweep'){
+    await startBulkJob('discover', {approved: true});
+  }else if(action && action.kind === 'provider'){
+    await runProviderDiscovery(action.id, {allowHeadedFallback: true});
+  }
+}
+
+/** Runs a single provider discovery (headless first). */
+async function runProviderDiscovery(id, opts){
+  opts = opts || {};
+  try{
+    const res = await api('/api/gateway/providers/' + encodeURIComponent(id) + '/discover', {
+      method:'POST',
+      body: JSON.stringify({allowHeadedFallback: opts.allowHeadedFallback === true}),
+    });
+    const report = res.report || {};
+    if(report.needsHeadedConsent && !opts.allowHeadedFallback){
+      // The provider needs a VISIBLE browser — ask the user first.
+      providerCardResults.set(id, {
+        ok: false,
+        text: t('cardResultNeedsVisibleBrowser'),
+        at: new Date().toLocaleTimeString(),
+      });
+      refreshProviderCards();
+      showBrowserConsent({kind: 'provider', id: id});
+      return;
+    }
+    applyDiscoveryReport(id, report, res.state);
+  }catch(e){
+    const msg = providerErrorMessage(e);
+    providerCardResults.set(id, { ok: false, text: t('cardResultDiscoveryFailed', { error: msg }), at: new Date().toLocaleTimeString() });
+    refreshProviderCards();
+    showToast(t('toastDiscoveryFailed', { error: msg }), 'error');
+  }
+}
+
+/** Renders a discovery report on the card (shared by every entry point). */
+function applyDiscoveryReport(id, report, state){
+  const count = (report.models || []).length;
+  const newCount = (report.changes || []).filter(c => c.type === 'model_added' || c.type === 'model_restored').length;
+  const srcText = t('modelsSourceLiveWebUi');
+  const text = newCount > 0
+    ? t('cardResultDiscoveredWithChanges', { count: count, newCount: newCount })
+    : t('cardResultDiscovered', { count: count, source: srcText });
+  if(report.status === 'discovered'){
+    providerCardResults.set(id, { ok: true, text: text, at: new Date().toLocaleTimeString() });
+    applyFreshProviderState(id, state);
+    showToast(t('toastDiscoveryDone', { count: count, newCount: newCount }));
+  }else{
+    const reason = report.detail || report.failureReason || 'unknown';
+    providerCardResults.set(id, { ok: false, text: t('cardResultDiscoveryFailed', { error: reason }), at: new Date().toLocaleTimeString() });
+    applyFreshProviderState(id, state);
+    showToast(t('toastDiscoveryFailed', { error: reason }), 'error');
+  }
+}
+
+async function startBulkJob(kind, opts){
+  opts = opts || {};
   const endpoint = kind === 'discover' ? '/api/gateway/discovery/sweep' : '/api/gateway/discovery/check-all';
   const strip = document.getElementById('providersJobStrip');
   if(strip) strip.style.display = 'flex';
   try{
-    const res = await api(endpoint, {method:'POST'});
+    const res = await api(endpoint, {method:'POST', body: JSON.stringify({approved: opts.approved === true})});
+    if(res.awaitingConsent){
+      renderBulkJob(res.job || null);
+      showBrowserConsent({kind: 'sweep'});
+      return;
+    }
     renderBulkJob(res.job || null);
     pollBulkJob();
   }catch(e){
@@ -7337,6 +7540,10 @@ async function checkBulkJob(){
     const job = res.job || null;
     if(!job) return;
     renderBulkJob(job);
+    if(job.awaitingConsent){
+      showBrowserConsent({kind: 'sweep'});
+      return;
+    }
     if(job.running) pollBulkJob();
   }catch(e){
     /* the job endpoint is optional */
@@ -9406,40 +9613,7 @@ function renderProvidersGrid(providers, force=false){
           providerCardErrors.delete(key);
           el.textContent = t(busyLabelKey);
           try{
-            const res = await api('/api/gateway/providers/' + encodeURIComponent(id) + '/discover', {method:'POST'});
-            const report = res.report || {};
-            if(report.status === 'discovered'){
-              const count = (report.models || []).length;
-              const newCount = (report.changes || []).filter(c => c.type === 'model_added' || c.type === 'model_restored').length;
-              const srcText = report.source === 'web-ui-dom' ? t('modelsSourceLiveWebUi') : (report.source === 'web-ui-network' ? t('modelsSourceLiveWebUi') : t('modelsSourceLiveWebUi'));
-              const text = newCount > 0
-                ? t('cardResultDiscoveredWithChanges', { count: count, newCount: newCount })
-                : t('cardResultDiscovered', { count: count, source: srcText });
-              providerCardResults.set(id, { ok: true, text: text, at: new Date().toLocaleTimeString() });
-              applyFreshProviderState(id, res.state);
-              showToast(t('toastDiscoveryDone', { count: count, newCount: newCount }));
-              if(newCount > 0){
-                showToast(t('toastDiscoveryChanges', { count: newCount }));
-                await loadModelNotifications();
-              }
-            }else if(report.deferred){
-              const reason = report.detail || t('discoveryDeferred');
-              providerCardErrors.set(key, reason);
-              providerCardResults.set(id, { ok: false, text: t('cardResultDeferred', { reason: reason }), at: new Date().toLocaleTimeString() });
-              applyFreshProviderState(id, res.state);
-              showToast(t('toastDiscoveryDeferred', { reason: reason }), 'error');
-            }else{
-              const msg = report.detail || report.failureReason || 'unknown';
-              providerCardErrors.set(key, msg);
-              providerCardResults.set(id, { ok: false, text: t('cardResultDiscoveryFailed', { error: msg }), at: new Date().toLocaleTimeString() });
-              applyFreshProviderState(id, res.state);
-              showToast(t('toastDiscoveryFailed', { error: msg }), 'error');
-            }
-          }catch(e){
-            const msg = providerErrorMessage(e);
-            providerCardErrors.set(key, msg);
-            providerCardResults.set(id, { ok: false, text: t('cardResultDiscoveryFailed', { error: msg }), at: new Date().toLocaleTimeString() });
-            showToast(t('toastDiscoveryFailed', { error: msg }), 'error');
+            await runProviderDiscovery(id);
           }finally{
             providerCardBusy.delete(key);
             refreshProviderCards();

@@ -56,6 +56,11 @@ export interface ModelDiscoveryResult {
   models: DiscoveredWebModel[];
   /** Set when the attempt failed. */
   failureReason?: DiscoveryFailureReason;
+  /**
+   * True when the headless scan failed and a VISIBLE browser is needed.
+   * The UI asks the user for consent before it may open one.
+   */
+  needsHeadedConsent?: boolean;
   /** Secret-free human explanation. */
   detail?: string;
   /** Which strategy produced the list. */

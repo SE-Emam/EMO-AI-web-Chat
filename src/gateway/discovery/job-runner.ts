@@ -19,6 +19,10 @@ export interface BulkJob {
   id: string;
   kind: BulkJobKind;
   running: boolean;
+  /** True while the job waits for the user's consent (a visible browser). */
+  awaitingConsent: boolean;
+  /** True when the user postponed the job. */
+  deferred?: boolean;
   total: number;
   done: number;
   /** The provider currently being processed. */
@@ -40,6 +44,9 @@ export interface JobRunnerOptions {
 export class BulkJobRunner {
   private job: BulkJob | null = null;
   private running = false;
+  /** True while a job exists (pending consent OR running). */
+  private active = false;
+  private pendingIds: string[] = [];
   private readonly options: JobRunnerOptions;
 
   constructor(options: JobRunnerOptions) {
@@ -59,21 +66,55 @@ export class BulkJobRunner {
    * Starts a job. If one is already running the running one is returned (the
    * user does not start two sweeps at once).
    */
-  start(kind: BulkJobKind, providerIds: string[]): BulkJob {
-    if (this.running && this.job) return this.job;
+  start(
+    kind: BulkJobKind,
+    providerIds: string[],
+    opts: { requireConsent?: boolean } = {},
+  ): BulkJob {
+    // A pending (awaiting consent) job must not be replaced by a new one.
+    if (this.active && this.job) return this.job;
     const now = this.options.now ?? Date.now;
     this.job = {
       id: `job-${now()}`,
       kind,
       running: true,
+      awaitingConsent: opts.requireConsent === true,
       total: providerIds.length,
       done: 0,
       startedAt: new Date(now()).toISOString(),
       results: [],
     };
+    this.pendingIds = providerIds;
+    this.active = true;
+    if (this.job.awaitingConsent) {
+      // The job waits for the user's consent — nothing is opened yet.
+      this.running = false;
+      return this.job;
+    }
     this.running = true;
     void this.execute(providerIds);
     return this.job;
+  }
+
+  /** The user approved opening a visible browser — the job starts now. */
+  approve(): boolean {
+    if (!this.job || !this.job.awaitingConsent) return false;
+    this.job.awaitingConsent = false;
+    this.running = true;
+    void this.execute(this.pendingIds);
+    return true;
+  }
+
+  /** The user postponed the job — nothing is opened. */
+  defer(): boolean {
+    if (!this.job || !this.job.awaitingConsent) return false;
+    this.job.awaitingConsent = false;
+    this.job.deferred = true;
+    this.job.running = false;
+    this.job.finishedAt = new Date((this.options.now ?? Date.now)()).toISOString();
+    this.running = false;
+    this.active = false;
+    return true;
   }
 
   private async execute(providerIds: string[]): Promise<void> {
@@ -100,5 +141,6 @@ export class BulkJobRunner {
       this.job.finishedAt = new Date((this.options.now ?? Date.now)()).toISOString();
     }
     this.running = false;
+    this.active = false;
   }
 }

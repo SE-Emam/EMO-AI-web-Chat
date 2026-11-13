@@ -59,6 +59,8 @@ export type DiscoveryStatus = 'discovered' | 'failed' | 'deferred' | 'unsupporte
 export interface ProviderDiscoveryReport {
   providerId: string;
   status: DiscoveryStatus;
+  /** True when a visible browser window is needed (and the user must approve). */
+  needsHeadedConsent?: boolean;
   source: DiscoverySource;
   complete: boolean;
   discoveredAt: string;
@@ -157,6 +159,7 @@ export class ModelDiscoveryService {
           providerId,
           status,
           deferred,
+          needsHeadedConsent: result.needsHeadedConsent === true,
           source: result.source,
           complete: false,
           discoveredAt,

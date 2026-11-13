@@ -321,16 +321,21 @@ export class PlaywrightDiscoveryRunner implements DiscoveryRunner {
       // Some providers serve a blocked or reduced page to a HEADLESS browser.
       // A manual scan may retry with a visible window (the background
       // scheduler never does — it must not open windows on the desktop).
-      const canRetryHeaded =
+      // The provider refused the HEADLESS browser. Opening a VISIBLE browser
+      // needs the user's consent, so without it we ASK instead of opening.
+      const needsVisibleBrowser =
         !best &&
-        options.allowHeadedFallback === true &&
         options.headless !== false &&
-        !options.signal?.aborted &&
         failures.some((f) =>
           f.failureReason === 'model_picker_not_found' ||
           f.failureReason === 'site_layout_changed' ||
           f.failureReason === 'provider_unavailable' ||
           f.failureReason === 'authentication_required');
+
+      const canRetryHeaded =
+        needsVisibleBrowser &&
+        options.allowHeadedFallback === true &&
+        !options.signal?.aborted;
       if (canRetryHeaded) {
         try {
           await ctx.close().catch(() => {});
@@ -396,6 +401,26 @@ export class PlaywrightDiscoveryRunner implements DiscoveryRunner {
       }
 
       // No strategy succeeded -> report the most specific failure.
+      if (!best && needsVisibleBrowser) {
+        const chosen = failures.find((f) => f.failureReason !== 'model_picker_not_found') || failures[0];
+        return {
+          providerId: options.providerId,
+          captured,
+          result: {
+            ...(chosen || {
+              providerId: options.providerId,
+              source: 'none',
+              complete: false,
+              discoveredAt: new Date(now()).toISOString(),
+              models: [],
+              failureReason: 'model_picker_not_found' as const,
+            }),
+            needsHeadedConsent: true,
+            detail:
+              'This provider does not serve its model list to a headless browser — a visible browser window is needed.',
+          },
+        };
+      }
       if (!best) {
         const specific = failures.find((f) => f.failureReason !== 'model_picker_not_found');
         const chosen = specific || failures[0];

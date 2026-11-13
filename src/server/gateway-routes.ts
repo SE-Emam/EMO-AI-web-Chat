@@ -1521,11 +1521,26 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
    * background and the UI polls /api/gateway/discovery/job for the progress.
    */
   app.post('/api/gateway/discovery/sweep', async (req, reply) => {
-    const job = opts.manager.startDiscoverySweep();
+    const body = (req.body || {}) as { approved?: boolean };
+    // Without an explicit approval the sweep only CREATES a pending job —
+    // the UI asks the user before any browser is opened.
+    const job = opts.manager.startDiscoverySweep({ requireConsent: body.approved !== true });
     if (!job) {
       return reply.status(503).send({ error: { message: 'Model discovery is not enabled on this gateway.' } });
     }
-    return { started: true, job };
+    return { started: true, awaitingConsent: job.awaitingConsent, job };
+  });
+
+  /**
+   * The user's answer to "the browser will open to update the models".
+   * approved=true lets the sweep open a visible browser; approved=false
+   * postpones it.
+   */
+  app.post('/api/gateway/discovery/consent', async (req, reply) => {
+    const body = (req.body || {}) as { approved?: boolean };
+    const approved = body.approved === true;
+    opts.manager.setHeadedConsent(approved);
+    return { approved, job: opts.manager.getBulkJob() };
   });
 
   /** Starts a background sweep that checks the CONNECTION of every provider. */

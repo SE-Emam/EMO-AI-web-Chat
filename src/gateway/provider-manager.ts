@@ -271,6 +271,8 @@ export class ProviderManager {
    * sweep can never report a connection status (and vice versa).
    */
   private bulkJobs: { connect?: BulkJobRunner; discover?: BulkJobRunner } = {};
+  /** True when the user allowed a visible browser window. */
+  private headedConsent = false;
 
   constructor(opts: { store: GatewayConfigStore; config: GatewayConfigFile; now?: () => number; factories?: Partial<Record<WebProviderId, Factory>>; connectionProbe?: (opts: ConnectionProbeOptions) => Promise<ProviderConnectionReport> }) {
     this.store = opts.store;
@@ -471,11 +473,15 @@ export class ProviderManager {
    * The scan uses the provider's OWN browser profile and never disturbs a
    * live driver session (the runner defers in that case).
    */
-  async discoverModels(id: WebProviderId): Promise<ProviderDiscoveryReport | null> {
+  async discoverModels(
+    id: WebProviderId,
+    opts: { allowHeadedFallback?: boolean } = {},
+  ): Promise<ProviderDiscoveryReport | null> {
     if (!this.discoveryService) return null;
-    // Manual scan: a headed retry is allowed (some providers block a headless
-    // browser). The background scheduler stays headless.
-    const report = await this.discoveryService.discover(id, { allowHeadedFallback: true });
+    // A visible browser window is only opened with the user's consent.
+    const report = await this.discoveryService.discover(id, {
+      allowHeadedFallback: opts.allowHeadedFallback === true,
+    });
     this.discoveryReports.set(id, report);
     return report;
   }
@@ -546,7 +552,7 @@ export class ProviderManager {
   }
 
   /** Starts a background sweep that discovers the models of every provider. */
-  startDiscoverySweep(): BulkJob | null {
+  startDiscoverySweep(opts: { requireConsent?: boolean } = {}): BulkJob | null {
     if (!this.discoveryService) return null;
     if (!this.bulkJobs.discover) {
       this.bulkJobs.discover = new BulkJobRunner({
@@ -555,7 +561,7 @@ export class ProviderManager {
         delayMs: 1200,
         runOne: async (providerId) => {
           const report = await this.discoveryService!.discover(providerId, {
-            allowHeadedFallback: true,
+            allowHeadedFallback: this.headedConsent === true,
           });
           this.discoveryReports.set(providerId as WebProviderId, report);
           return {
@@ -567,7 +573,21 @@ export class ProviderManager {
         },
       });
     }
-    return this.bulkJobs.discover.start('discover', [...WEB_PROVIDER_IDS]);
+    return this.bulkJobs.discover.start('discover', [...WEB_PROVIDER_IDS], {
+      requireConsent: opts.requireConsent !== false,
+    });
+  }
+
+  /** The user's consent for opening a VISIBLE browser window. */
+  setHeadedConsent(approved: boolean): boolean {
+    this.headedConsent = approved;
+    if (approved) this.bulkJobs.discover?.approve();
+    else this.bulkJobs.discover?.defer();
+    return approved;
+  }
+
+  headedConsentGranted(): boolean {
+    return this.headedConsent;
   }
 
   /** The progress of the running (or last) bulk job. */
