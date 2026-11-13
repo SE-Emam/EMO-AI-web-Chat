@@ -197,6 +197,24 @@ export interface AgentBridgeSettings {
    * of the request, so a bounded retry is what turns it into a call.
    */
   maxAttempts?: number;
+  /**
+   * When a request already carries the EXACT call it expects (the task named
+   * a local path and a matching tool was announced) and the model still
+   * answers with prose after every corrective turn, emit that call anyway
+   * instead of handing the refusal to the client.
+   *
+   * WHY: the refusal is stochastic — the same Arabic directory task passed
+   * once and failed once on the identical request — so bounded retries alone
+   * cannot make file access reliable. Emitting the pre-computed call keeps
+   * the agent's file environment working; the tool REALLY runs on the client
+   * and the model's next turn is grounded in the real result.
+   *
+   * Scope: before any tool result, a task that names the path cannot be
+   * answered without the call, so no amount of prose is accepted. After a
+   * tool result, a turn that stops refusing and gives a real answer is kept
+   * as-is — only a reply that still reads like a refusal is replaced.
+   */
+  enforceExpectedCall?: boolean;
 }
 
 export interface McpSettings {

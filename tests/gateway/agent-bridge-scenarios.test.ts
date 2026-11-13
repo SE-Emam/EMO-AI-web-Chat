@@ -371,9 +371,13 @@ describe('Agent Bridge Scenarios', () => {
     it('Detects Arabic refusals', () => {
       const refusal1 = 'لم أتمكن من الوصول إلى الملف';
       const refusal2 = 'المسار غير موجود في البيئة';
+      const refusal3 = 'اتصال بيئة الجهاز';
+      const refusal4 = 'بيئة الجهاز';
       
       expect(looksLikeToolRefusal(refusal1)).toBe(true);
       expect(looksLikeToolRefusal(refusal2)).toBe(true);
+      expect(looksLikeToolRefusal(refusal3)).toBe(true);
+      expect(looksLikeToolRefusal(refusal4)).toBe(true);
     });
     
     it('Does not detect valid tool calls', () => {

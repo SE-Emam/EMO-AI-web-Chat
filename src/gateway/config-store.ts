@@ -161,7 +161,7 @@ export function defaultGatewayConfig(): GatewayConfigFile {
     ui: {
       heartbeatTimeoutMs: 15000,
       mcp: { workspaceRoots: defaultMcpWorkspaceRoots() },
-      agentBridge: { environmentBlock: false, repairRefusals: true, maxAttempts: 3 },
+      agentBridge: { environmentBlock: false, repairRefusals: true, maxAttempts: 3, enforceExpectedCall: true },
       discovery: {
         enabled: true,
         intervalMs: 12 * 60 * 60 * 1000,
@@ -315,6 +315,7 @@ function mergeConfig(defaults: GatewayConfigFile, raw: unknown): GatewayConfigFi
         environmentBlock: (rawUi.agentBridge as any)?.environmentBlock === true,
         repairRefusals: (rawUi.agentBridge as any)?.repairRefusals !== false,
         maxAttempts: Math.max(1, Math.min(4, Number((rawUi.agentBridge as any)?.maxAttempts) || 3)),
+        enforceExpectedCall: (rawUi.agentBridge as any)?.enforceExpectedCall !== false,
       },
       mcp: {
         workspaceRoots: (() => {

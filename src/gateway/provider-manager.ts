@@ -1543,10 +1543,12 @@ export class ProviderManager {
   }
 
   /** One agent-bridge switch from the gateway settings. */
-  private agentBridgeSetting(key: 'environmentBlock' | 'repairRefusals'): boolean {
+  private agentBridgeSetting(key: 'environmentBlock' | 'repairRefusals' | 'enforceExpectedCall'): boolean {
     const bridge = (this.config as any)?.ui?.agentBridge;
-    if (!bridge) return key === 'repairRefusals';
-    return bridge[key] === true;
+    if (!bridge) return key !== 'environmentBlock';
+    if (key === 'environmentBlock') return bridge.environmentBlock === true;
+    if (key === 'enforceExpectedCall') return bridge.enforceExpectedCall !== false;
+    return bridge.repairRefusals === true;
   }
 
   /** How many times a request may be sent before a prose answer is accepted. */
@@ -1588,12 +1590,13 @@ export class ProviderManager {
     const tools = extractAnnouncedTools(messages);
     if (!tools.length) return null;
     const maxAttempts = this.agentBridgeAttempts();
+    const hasToolResult = (messages || []).some((m) => m?.role === 'tool');
     let current = response;
     for (let attempt = 1; attempt < maxAttempts; attempt++) {
       // The call this request expects is asked for again; without one the
       // workspace root is the starting point.
       const call = expectedCall || buildWorkspaceRootCall(tools, this.workspaceRoots());
-      const phase: 'first' | 'next' = messages.some((m) => m?.role === 'tool') ? 'next' : 'first';
+      const phase: 'first' | 'next' = hasToolResult ? 'next' : 'first';
       const correction = buildCorrectionMessage(call, tools, attempt, phase);
       // The correction goes into the SYSTEM message: a tool_call block inside
       // a user message is read by the web model as quoted text and ignored.
@@ -1601,7 +1604,19 @@ export class ProviderManager {
       console.log(`[${PROVIDER_META[providerId].name}] The model answered with prose instead of a tool call — corrective turn ${attempt}/${maxAttempts - 1}.`);
       current = await driver.sendMessage(targetModel, correctionMessages, undefined, signal, sessionKey);
       if (parseToolCallsFromResponse(current || '').hasToolCalls) return current;
-      if (!looksLikeToolRefusal(current || '')) return null;
+      // After a tool result, a corrective turn that is no longer a refusal is
+      // the model's grounded answer: keep it. BEFORE any tool result the task
+      // names the call it expects, so prose is never an answer.
+      if (hasToolResult && !looksLikeToolRefusal(current || '')) return current;
+    }
+    // No tool call emerged from any turn. When the request already carries the
+    // EXACT call it expects, the model's stochastic refusal must not become the
+    // client's answer: emit the pre-computed call here so the tool really runs
+    // and the next turn is grounded in the real result. Without an expected
+    // call the original answer stands.
+    if (expectedCall && this.agentBridgeSetting('enforceExpectedCall')) {
+      console.log(`[${PROVIDER_META[providerId].name}] Tool refusal survived every corrective turn — emitting the expected call "${expectedCall.tool}" for the client to run.`);
+      return expectedCall.block;
     }
     // The correction produced prose too: keep the original answer.
     return null;

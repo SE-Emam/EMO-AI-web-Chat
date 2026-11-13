@@ -27,6 +27,22 @@ describe('gateway config store', () => {
     expect(loaded.ui.discovery?.checkConnectionsOnStartup).toBe(false);
   });
 
+  it('ships the agent-bridge defaults (expected-call enforcement on)', () => {
+    const cfg = defaultGatewayConfig();
+    expect(cfg.ui.agentBridge?.repairRefusals).toBe(true);
+    expect(cfg.ui.agentBridge?.environmentBlock).toBe(false);
+    expect(cfg.ui.agentBridge?.enforceExpectedCall).toBe(true);
+  });
+
+  it('keeps an explicit enforceExpectedCall=false across save and load', async () => {
+    const store2 = new GatewayConfigStore(file);
+    const cfg = defaultGatewayConfig();
+    (cfg.ui.agentBridge as any).enforceExpectedCall = false;
+    await store2.save(cfg);
+    const loaded = await new GatewayConfigStore(file).load();
+    expect(loaded.ui.agentBridge?.enforceExpectedCall).toBe(false);
+  });
+
   beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gwcfg-'));
     file = path.join(dir, 'gateway.json');

@@ -6,6 +6,7 @@ import type { ArenaDriver, ChatMessage } from '../../src/types.js';
 import type { WebProviderId } from '../../src/gateway/types.js';
 import { GatewayConfigStore, defaultGatewayConfig } from '../../src/gateway/config-store.js';
 import { ProviderManager } from '../../src/gateway/provider-manager.js';
+import { parseToolCallsFromResponse } from '../../src/server/tool-interpreter.js';
 
 function fakeDriver(name: string, models: string[], onSend?: (m: string) => string, closeSpy?: () => void): ArenaDriver {
   return {
@@ -305,5 +306,114 @@ describe('ProviderManager', () => {
     // 5. Unselected model throws with statusCode 404
     await expect(mgr.getActiveDriver().sendMessage('nonexistent-model', [{ role: 'user', content: 'hello' }]))
       .rejects.toMatchObject({ statusCode: 404, type: 'invalid_request_error' });
+  });
+
+  describe('agent-tool bridge: expected-call enforcement', () => {
+    const TOOL_SYSTEM = [
+      '### TOOL CALLING MODE (MANDATORY - ACTIVE NOW)',
+      'Available tools (JSON schemas):',
+      '```json',
+      JSON.stringify([
+        {
+          name: 'list_directory',
+          description: 'List the entries of one folder.',
+          parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+        },
+      ]),
+      '```',
+    ].join('\n');
+
+    // The exact refusal the live web model produced for the Arabic directory task.
+    const refusal = 'تعذّر الوصول إلى مجلد المشروع بسبب خطأ في الاتصال ببيئة التنفيذ. لم أتمكن من قراءة الملفات بعد.';
+    const taskMessages: ChatMessage[] = [
+      { role: 'system', content: TOOL_SYSTEM },
+      { role: 'user', content: 'اقرأ ملفات المشروع في /Users/emamabdullaziz/Desktop/Doctor-Car' },
+    ];
+
+    function refusingManager(enforce: boolean) {
+      const config = defaultGatewayConfig();
+      config.providers['claude-web'] = { enabled: true, settings: {}, availableModels: ['claude-web:default'], selectedModels: ['claude-web:default'] };
+      (config.ui.agentBridge as any).enforceExpectedCall = enforce;
+      return new ProviderManager({ store, config, factories: { 'claude-web': () => fakeDriver('claude', ['claude-web:default'], () => refusal) } as any });
+    }
+
+    it('emits the expected call when the model refuses every corrective turn', async () => {
+      const mgr = refusingManager(true);
+      await mgr.init();
+      await mgr.start('claude-web');
+      const out = await mgr.getActiveDriver().sendMessage('claude-web:default', taskMessages);
+      const parsed = parseToolCallsFromResponse(out);
+      expect(parsed.hasToolCalls).toBe(true);
+      const call = parsed.toolCalls?.[0];
+      expect(call?.function.name).toBe('list_directory');
+      expect(JSON.parse(String(call?.function.arguments))).toEqual({ path: '/Users/emamabdullaziz/Desktop/Doctor-Car' });
+    });
+
+    it('keeps the prose refusal when enforcement is disabled', async () => {
+      const mgr = refusingManager(false);
+      await mgr.init();
+      await mgr.start('claude-web');
+      const out = await mgr.getActiveDriver().sendMessage('claude-web:default', taskMessages);
+      expect(parseToolCallsFromResponse(out).hasToolCalls).toBe(false);
+      expect(out).toBe(refusal);
+    });
+
+    it('emits the expected call even when a corrective turn stops reading as a refusal (first phase)', async () => {
+      const config = defaultGatewayConfig();
+      config.providers['claude-web'] = { enabled: true, settings: {}, availableModels: ['claude-web:default'], selectedModels: ['claude-web:default'] };
+      // The first answer is a refusal; the corrective turns answer with prose
+      // that no refusal pattern matches (the live model does this too). The
+      // first-phase request still names the call it expects, so it must be
+      // emitted rather than handing the client the refusal.
+      let calls = 0;
+      const driver: ArenaDriver = {
+        async listModels() { return ['claude-web:default']; },
+        async sendMessage() { calls++; return calls === 1 ? refusal : 'Sure, I can help with that. Which file should I look at first?'; },
+        async close() { /* noop */ },
+      };
+      const mgr = new ProviderManager({ store, config, factories: { 'claude-web': () => driver } as any });
+      await mgr.init();
+      await mgr.start('claude-web');
+      const out = await mgr.getActiveDriver().sendMessage('claude-web:default', taskMessages);
+      const parsed = parseToolCallsFromResponse(out);
+      expect(parsed.hasToolCalls).toBe(true);
+      expect(parsed.toolCalls?.[0]?.function.name).toBe('list_directory');
+    });
+
+    it('does not force a continuation call over a grounded answer after a tool result', async () => {
+      const config = defaultGatewayConfig();
+      config.providers['claude-web'] = { enabled: true, settings: {}, availableModels: ['claude-web:default'], selectedModels: ['claude-web:default'] };
+      // Tool set with a reader so a continuation call IS derivable from the
+      // result — the point is that a real answer wins over a forced call.
+      const toolSystem = [
+        '### TOOL CALLING MODE (MANDATORY - ACTIVE NOW)',
+        'Available tools (JSON schemas):',
+        '```json',
+        JSON.stringify([
+          { name: 'list_directory', description: 'List the entries of one folder.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
+          { name: 'read_file', description: 'Read one file.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
+        ]),
+        '```',
+      ].join('\n');
+      const grounded = 'The folder contains README.md and a Project directory.';
+      let calls = 0;
+      const driver: ArenaDriver = {
+        async listModels() { return ['claude-web:default']; },
+        async sendMessage() { calls++; return calls === 1 ? refusal : grounded; },
+        async close() { /* noop */ },
+      };
+      const mgr = new ProviderManager({ store, config, factories: { 'claude-web': () => driver } as any });
+      await mgr.init();
+      await mgr.start('claude-web');
+      const withResult: ChatMessage[] = [
+        { role: 'system', content: toolSystem },
+        { role: 'user', content: 'اقرأ ملفات المشروع في /Users/emamabdullaziz/Desktop/Doctor-Car' },
+        { role: 'assistant', content: '```tool_call\n{"name":"list_directory","arguments":{"path":"/Users/emamabdullaziz/Desktop/Doctor-Car"}}\n```', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'list_directory', arguments: '{"path":"/Users/emamabdullaziz/Desktop/Doctor-Car"}' } }] } as any,
+        { role: 'tool', content: 'README.md\nProject\n' },
+      ];
+      const out = await mgr.getActiveDriver().sendMessage('claude-web:default', withResult);
+      expect(parseToolCallsFromResponse(out).hasToolCalls).toBe(false);
+      expect(out).toBe(grounded);
+    });
   });
 });
