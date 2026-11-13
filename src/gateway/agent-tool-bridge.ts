@@ -291,7 +291,9 @@ export function buildCorrectionMessage(
   const opening =
     attempt <= 1
       ? `${NEUTRAL_CORRECTION_MARKER}, and the calling client provides their execution environment.`
-      : `The tools of this request are still the ones announced with it, and the client still runs them on this machine.`;
+      : attempt <= 2
+        ? `The tools of this request are still the ones announced with it, and the client still runs them on this machine.`
+        : `FINAL INSTRUCTION: You MUST use the tools. Do not claim environment problems — the tools work and you are required to use them now.`;
   const lines = [opening];
   if (phase === 'next') {
     // The turn that follows a tool result: a tool HAS run, so the first
@@ -308,7 +310,9 @@ export function buildCorrectionMessage(
       '### THE TOOL CALL TO EMIT NOW',
       attempt <= 1
         ? 'No tool has run yet: nothing has been executed, so nothing can have failed.'
-        : 'The tool has not been requested yet: nothing has been executed, so nothing can have failed.',
+        : attempt <= 2
+          ? 'The tool has not been requested yet: nothing has been executed, so nothing can have failed.'
+          : 'You are required to use the tools now. No more excuses.',
     );
   }
   if (call) {
@@ -325,6 +329,9 @@ export function buildCorrectionMessage(
     );
   }
   lines.push('A tool error names the reason it failed.');
+  if (attempt >= 3) {
+    lines.push('DO NOT claim environment problems. The tools work. Use them now.');
+  }
   return lines.join('\n');
 }
 
@@ -643,7 +650,7 @@ export function looksLikeToolRefusal(text: string): boolean {
     /\bnot (?:been )?(?:exposed|available|present|listed|supported|enabled|reachable)\b/i,
     /\b(?:cannot|can't|unable to|could not|couldn't) (?:access|read|open|inspect|reach|connect to|use)\b/i,
     /\bno (?:tool|tools|file|path|directory) (?:is|are) (?:available|present|exposed|listed)\b/i,
-    /\b(?:connection|connectivity|channel|bridge|tunnel|workspace|environment|filesystem|file environment)[^.!?\n]{0,40}\b(?:timed out|timeout|error|failed|failure|unavailable|disconnected|not connected|broken|offline|inactive|interrupted|dropped|NOT_FOUND|not found)\b/i,
+    /\b(?:connection|connectivity|channel|bridge|tunnel|workspace|environment|filesystem|file environment|machine environment)[^.!?\n]{0,40}\b(?:timed out|timeout|error|failed|failure|unavailable|disconnected|not connected|broken|offline|inactive|interrupted|dropped|NOT_FOUND|not found)\b/i,
     /\b(?:connection|connectivity|environment|filesystem|workspace) (?:issue|problem|error)\b/i,
     /\b(?:not|wasn't|was not|isn't|is not) found (?:at|in) the (?:specified|current|given)?\s*path\b/i,
     /\bpath (?:isn't|is not|wasn't|was not) (?:present|found|valid|available)\b/i,
@@ -664,6 +671,8 @@ export function looksLikeToolRefusal(text: string): boolean {
     /(?:المسار|المجلد|الملف)\s*غير موجود/,
     /(?:ارفع|أرفق|أرسل)\s*(?:المجلد|الملف|مضغوط)/,
     /المسار غير موجود في بيئة/,
+    /اتصال بيئة الجهاز/,
+    /بيئة الجهاز/,
     /(?:على|في)\s*النظام\s*(?:الملف|المجلد)/,
     /(?:البيئة|بيئة)\s*(?:المشروع|الملفات|التنفيذ|العامل)/,
     /لم يتم(?: العثور)?[^.\n]{0,25}(?:على|بعد)/,

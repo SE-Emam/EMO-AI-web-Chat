@@ -1553,7 +1553,7 @@ export class ProviderManager {
   private agentBridgeAttempts(): number {
     const bridge = (this.config as any)?.ui?.agentBridge;
     const n = Number(bridge?.maxAttempts);
-    return Number.isFinite(n) ? Math.max(1, Math.min(4, n)) : 3;
+    return Number.isFinite(n) ? Math.max(1, Math.min(5, n)) : 4;
   }
 
   /**
