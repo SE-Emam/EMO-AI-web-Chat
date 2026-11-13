@@ -120,6 +120,8 @@ export interface ProviderCardView {
     tone: CardTone;
     checkedAt?: string;
     detail?: string;
+    detailKey?: string;
+    detailParams?: Record<string, string | number>;
     latencyMs?: number;
   };
   /** Live web discovery state (real scans only). */
@@ -251,7 +253,14 @@ export function buildModelsSection(
 /** Derives the connection section of the card. */
 export function buildConnectionSection(
   meta: ProviderMetaState | undefined,
-  connection?: { status?: ProviderConnectionStatus; checkedAt?: string; detail?: string; latencyMs?: number },
+  connection?: {
+    status?: ProviderConnectionStatus;
+    checkedAt?: string;
+    detail?: string;
+    detailKey?: string;
+    detailParams?: Record<string, string | number>;
+    latencyMs?: number;
+  },
 ): ProviderCardView['connection'] {
   const status = connection?.status || meta?.lastConnectionStatus;
   const labelKey = status
@@ -264,6 +273,8 @@ export function buildConnectionSection(
     tone,
     checkedAt: connection?.checkedAt || meta?.lastConnectionCheckAt,
     detail: connection?.detail || meta?.lastConnectionDetail,
+    detailKey: connection?.detailKey,
+    detailParams: connection?.detailParams,
     latencyMs: connection?.latencyMs ?? meta?.lastConnectionLatencyMs,
   };
 }

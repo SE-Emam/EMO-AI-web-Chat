@@ -164,7 +164,7 @@ describe('Real provider connection probe', () => {
     expect(report.failureCode).toBe('NETWORK_TIMEOUT');
   });
 
-  it('reports unknown when the selected model is missing from the discovered list', async () => {
+  it('keeps the connection healthy when only the selected model is missing', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'conn-profile-'));
     fs.writeFileSync(path.join(dir, 'Cookies'), Buffer.alloc(9000, 1));
     const report = await checkProviderConnection({
@@ -176,8 +176,10 @@ describe('Real provider connection probe', () => {
       availableModels: ['gemini-web:default'],
       probe: httpReply(200),
     });
-    expect(report.status).toBe('unknown');
+    // A missing model is a model problem, not a connection problem.
+    expect(report.status).toBe('connected');
     expect(report.signals.selectedModelAvailable).toBe(false);
+    expect(report.detailKey).toBe('connDetailSelectedModelMissing');
     fs.rmSync(dir, { recursive: true, force: true });
   });
 

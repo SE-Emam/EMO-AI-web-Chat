@@ -70,6 +70,10 @@ export interface ProviderConnectionReport {
   latencyMs: number;
   /** Short, secret-free human explanation of the status. */
   detail?: string;
+  /** i18n key for the detail (resolved by the UI). */
+  detailKey?: string;
+  /** Parameters for the i18n key. */
+  detailParams?: Record<string, string | number>;
   /** Central Task 14 failure code when the probe failed. */
   failureCode?: ProviderFailureCode;
   /** HTTP status of the probe, when a response was received. */
@@ -344,6 +348,8 @@ async function runConnectionProbe(
   }
 
   let endpoint = baseUrl;
+  let detailKey: string | undefined;
+  let detailParams: Record<string, string | number> | undefined;
   let probe: ProbeResult;
   try {
     probe = opts.probe
@@ -383,6 +389,8 @@ async function runConnectionProbe(
       checkedAt,
       latencyMs: probe.latencyMs,
       detail,
+      detailKey,
+      detailParams,
       failureCode: code,
       endpoint,
       signals,
@@ -397,6 +405,7 @@ async function runConnectionProbe(
   let status: ProviderConnectionStatus = httpDerived;
   let detail: string;
 
+
   if (caps.connectionType === 'web') {
     // For a WEB provider the HTTP status of the site root says almost nothing
     // about the session: many providers answer a plain GET with 403 (CDN) or
@@ -405,35 +414,47 @@ async function runConnectionProbe(
     // the reachability signal is "the host answered at all".
     if (httpStatus === 429) {
       status = 'rate_limited';
+      detailKey = 'connDetailRateLimited';
+      detailParams = { status: httpStatus };
       detail = `Provider answered HTTP ${httpStatus} (rate limited).`;
     } else if (httpStatus === 402) {
       status = 'quota_exhausted';
+      detailKey = 'connDetailQuota';
+      detailParams = { status: httpStatus };
       detail = `Provider answered HTTP ${httpStatus} (quota exhausted).`;
     } else if (httpStatus === 401) {
       status = 'authentication_required';
+      detailKey = 'connDetailAuthRequired';
+      detailParams = { status: httpStatus };
       detail = `Provider answered HTTP ${httpStatus} (authentication required).`;
     } else if (httpStatus >= 500) {
       status = 'provider_unavailable';
+      detailKey = 'connDetailServerError';
+      detailParams = { status: httpStatus };
       detail = `Provider answered HTTP ${httpStatus} (server error).`;
     } else if (!browserAvailable) {
       status = 'browser_unavailable';
+      detailKey = 'connDetailNoBrowser';
       detail = 'Provider site is reachable, but no Chromium build is installed for the browser adapters.';
     } else if (!profilePresent) {
       status = 'authentication_required';
+      detailKey = 'connDetailNoProfile';
       detail = 'Provider site is reachable, but no browser profile exists yet — sign in first.';
     } else if (!authenticated) {
       status = 'authentication_required';
+      detailKey = 'connDetailNoSession';
       detail = 'Provider site is reachable, but the browser profile carries no active session.';
     } else {
       status = 'connected';
-      detail =
-        httpStatus === 403
-          ? 'Provider site reachable (its CDN answers plain requests with 403) and the browser session is present.'
-          : 'Provider site reachable and browser session present.';
+      detailKey = httpStatus === 403 ? 'connDetailConnectedCdn' : 'connDetailConnected';
+      detail = httpStatus === 403
+        ? 'Provider site reachable (its CDN answers plain requests with 403) and the browser session is present.'
+        : 'Provider site reachable and browser session present.';
     }
   } else if (httpDerived === 'connected') {
     if (!browserAvailable) {
       status = 'browser_unavailable';
+      detailKey = 'connDetailNoBrowser';
       detail = 'Provider site is reachable, but no Chromium build is installed for the browser adapters.';
     } else {
       status = 'connected';
@@ -452,8 +473,11 @@ async function runConnectionProbe(
               : `Provider answered HTTP ${httpStatus} — reachable, but the session could not be confirmed.`;
   }
 
+  // A missing model is a MODEL problem, not a CONNECTION problem — it is
+  // reported as a signal and shown on the models tile, but it must not
+  // downgrade a healthy connection to "unknown".
   if (status === 'connected' && !signals.selectedModelAvailable) {
-    status = 'unknown';
+    detailKey = 'connDetailSelectedModelMissing';
     detail = 'Provider reachable, but the selected model is not present in the discovered model list.';
   }
 
@@ -463,6 +487,8 @@ async function runConnectionProbe(
     checkedAt,
     latencyMs: probe.latencyMs,
     detail,
+    detailKey,
+    detailParams,
     failureCode: failure?.code,
     httpStatus: httpStatus || undefined,
     endpoint,

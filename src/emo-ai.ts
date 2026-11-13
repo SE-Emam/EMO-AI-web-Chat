@@ -65,6 +65,11 @@ async function main() {
     profileDirFor: (id) => manager.profileDirFor(id as (typeof WEB_PROVIDER_IDS)[number]),
     driverRunning: (id) => manager.isDriverRunning(id as (typeof WEB_PROVIDER_IDS)[number]),
     headlessFor: (id) => manager.getConfig().providers[id as (typeof WEB_PROVIDER_IDS)[number]]?.settings?.headless !== false,
+    // A successful discovery REPLACES the provider's model list — otherwise
+    // the card would keep showing the static catalog.
+    applyDiscoveredModels: async (id, models, source) => {
+      await manager.applyDiscoveredModels(id as (typeof WEB_PROVIDER_IDS)[number], models, source);
+    },
   });
   const discoveryScheduler = new DiscoveryScheduler({
     service: discoveryService,

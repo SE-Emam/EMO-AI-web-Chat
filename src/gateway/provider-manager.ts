@@ -38,6 +38,7 @@ import {
   type ModelDiscoveryOutcome,
 } from './provider-model-discovery.js';
 import type { ModelDiscoveryService, ProviderDiscoveryReport } from './discovery/service.js';
+import type { DiscoveredWebModel } from './discovery/types.js';
 import type { DiscoveryScheduler } from './discovery/scheduler.js';
 import { getDiscoveryAdapter } from './discovery/adapters.js';
 
@@ -426,6 +427,37 @@ export class ProviderManager {
 
   getDiscoveryScheduler(): DiscoveryScheduler | null {
     return this.discoveryScheduler;
+  }
+
+  /**
+   * Publishes the DISCOVERED models into the provider's own model list.
+   *
+   * - only models with a STABLE id become selectable (the driver can route
+   *   them); display-name-only models are reported but never offered as
+   *   executable;
+   * - the user's selection is NOT silently replaced: a selected model that
+   *   disappeared stays selected and is shown as "unavailable" on the card.
+   */
+  async applyDiscoveredModels(
+    id: WebProviderId,
+    models: DiscoveredWebModel[],
+    source: string = 'web-ui',
+  ): Promise<void> {
+    const cfg = this.providerConfig(id);
+    const executable = models
+      .filter((m) => m.identityConfidence === 'stable-id' && m.providerModelId)
+      .map((m) => m.providerModelId as string);
+    cfg.availableModels = executable;
+    // The card shows WHERE the list came from — the live discovery must say so.
+    cfg.meta = {
+      ...(cfg.meta || {}),
+      modelsSource: source as ProviderMetaState['modelsSource'],
+      modelsDiscoveryMode: 'web-ui-live-discovery',
+      lastModelsRefreshAt: new Date(this.now()).toISOString(),
+      lastModelsRefreshCount: models.length,
+      lastModelsError: undefined,
+    };
+    await this.saveConfig().catch(() => {});
   }
 
   /**

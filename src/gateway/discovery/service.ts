@@ -39,6 +39,18 @@ export interface DiscoveryServiceOptions {
    * the provider itself.
    */
   headlessFor?: (providerId: string) => boolean;
+  /**
+   * Writes the DISCOVERED models into the provider's own model list.
+   *
+   * Without this the card keeps showing the static catalog and the discovery
+   * would only update a snapshot nobody sees. The provider manager owns the
+   * configuration, so it performs the write.
+   */
+  applyDiscoveredModels?: (
+    providerId: string,
+    models: DiscoveredWebModel[],
+    source: string,
+  ) => Promise<void>;
   now?: () => number;
 }
 
@@ -195,6 +207,18 @@ export class ModelDiscoveryService {
 
       // Models that are back are no longer pending.
       this.removals.reconcile(providerId, currentModels);
+
+      // ---- publish the discovered list to the provider ---------------
+      // The snapshot is the history; the provider's own list is what the card
+      // (and the router) use — it MUST be refreshed, otherwise the card keeps
+      // showing the old static catalog.
+      if (this.options.applyDiscoveredModels) {
+        try {
+          await this.options.applyDiscoveredModels(providerId, models, result.source);
+        } catch {
+          /* the snapshot is still saved; the list update is best effort */
+        }
+      }
 
       // ---- notifications ---------------------------------------------
       let notificationsCreated = 0;

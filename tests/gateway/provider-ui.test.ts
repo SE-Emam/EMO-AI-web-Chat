@@ -51,6 +51,29 @@ function providerState(id: string, overrides: Record<string, unknown> = {}): any
 }
 
 describe('Providers & Models page — provider card UI (real gateway UI script)', () => {
+  it('never hides the card body behind a hover (the actions must always be reachable)', async () => {
+    const fs = await import('node:fs');
+    const src = fs.readFileSync(new URL('../../src/gateway/ui.ts', import.meta.url), 'utf8');
+    const start = src.indexOf('.provider-card-body{');
+    const end = src.indexOf('.providers-filter-bar{');
+    expect(start).toBeGreaterThan(0);
+    const css = src.slice(start, end);
+    // A collapsed body (max-height:0 / pointer-events:none) made every card
+    // action unreachable unless the mouse happened to hover the card.
+    expect(css).not.toMatch(/max-height:\s*0/);
+    expect(css).not.toMatch(/pointer-events:\s*none/);
+    expect(css).not.toMatch(/opacity:\s*0/);
+  });
+
+  it('renders the three status tiles (live discovery, connection, models)', async () => {
+    ui.renderProvidersGrid([providerState('gemini-web')]);
+    const html = ui.cardHtml('gemini-web');
+    expect(html).toContain('provider-status-grid');
+    expect(html).toContain('الاكتشاف الحيّ');
+    expect(html).toContain('الاتصال');
+    expect(html).toContain('النماذج');
+  });
+
   let ui: UiHarness;
 
   beforeEach(() => {
@@ -92,7 +115,8 @@ describe('Providers & Models page — provider card UI (real gateway UI script)'
     expect(html).toContain('الاكتشاف الحيّ: يعمل');
     expect(html).toContain('7 نموذج مكتشف');
     expect(html).toContain('+2 جديد');
-    expect(html).toContain('2026-11-13T00:00:00.000Z');
+    // The timestamp is rendered as a readable local time (not a raw ISO blob).
+    expect(html).toMatch(/\d{1,2}:\d{2}/);
   });
 
   it('offers Discover / Check Changes / View Changes on every card', () => {
@@ -340,7 +364,7 @@ describe('Providers & Models page — provider card UI (real gateway UI script)'
     expect(html).toContain('المزوّد غير متاح');
     expect(html).toContain('ECONNREFUSED');
     expect(html).toContain('قائمة مُهيّأة');
-    expect(html).toContain('2026-11-12T09:00:00.000Z');
+    expect(html).toMatch(/\d{1,2}:\d{2}/);
   });
 
   it('does not render a model that the provider never offered (no invented ids)', () => {

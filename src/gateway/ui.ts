@@ -884,23 +884,69 @@ button:disabled{opacity:0.45;cursor:not-allowed}
   border-color:var(--border-focus);
   box-shadow:var(--shadow);
 }
+/* The card body is ALWAYS visible: the cards are the content of this page.
+   (It used to collapse until hover — which hid every action behind a hover
+   and made the page look empty.) */
 .provider-card-body{
   display:flex;
   flex-direction:column;
-  gap:12px;
-  max-height:0;
-  opacity:0;
-  overflow:hidden;
-  margin-top:0;
-  pointer-events:none;
-  transition:max-height .28s ease, opacity .2s ease, margin-top .2s ease;
-}
-.provider-card:hover .provider-card-body,
-.provider-card:focus-within .provider-card-body{
-  max-height:2000px;
-  opacity:1;
+  gap:10px;
   margin-top:12px;
-  pointer-events:auto;
+}
+/* Compact status tiles: live discovery · connection · models */
+.provider-status-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(118px,1fr));
+  gap:6px;
+}
+.provider-status-tile{
+  border:1px solid var(--border-subtle);
+  background:var(--card-subtle);
+  border-radius:7px;
+  padding:7px 9px;
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  gap:3px;
+}
+.provider-status-label{
+  font-size:9.5px;
+  letter-spacing:.02em;
+  text-transform:uppercase;
+  color:var(--text-dim);
+}
+.provider-status-value{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  flex-wrap:wrap;
+  font-size:11.5px;
+  color:var(--text);
+  line-height:1.4;
+}
+.provider-status-sub{
+  font-size:10px;
+  color:var(--text-dim);
+  line-height:1.4;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.provider-actions{
+  display:flex;
+  gap:6px;
+  flex-wrap:wrap;
+  align-items:center;
+  padding-top:2px;
+}
+.provider-actions .btn-sm{font-size:11px;padding:4px 9px}
+.provider-models-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:8px;
+  font-size:12px;
+  font-weight:600;
 }
 .providers-filter-bar{
   background:var(--card-bg);
@@ -1109,6 +1155,7 @@ button:disabled{opacity:0.45;cursor:not-allowed}
 }
 
 .models-container{
+  scrollbar-width:thin;
   background:var(--card-subtle);
   border:1px solid var(--border);
   border-radius:6px;
@@ -3677,6 +3724,24 @@ const I18N = {
     toastDiscoveryDeferred: "أُجّل الاكتشاف: {reason}",
     toastNoChanges: "لا توجد تغييرات في النماذج.",
     cardResultDiscovered: "اكتمل الاكتشاف: {count} نموذج ({source})",
+    discoveryTileLabel: "الاكتشاف الحيّ",
+    connDetailConnected: "موقع المزوّد متاح وجلسة المتصفح موجودة.",
+    connDetailSelectedModelMissing: "المزوّد متاح، لكن النموذج المحدد غير موجود ضمن القائمة المكتشفة.",
+    connDetailConnectedCdn: "موقع المزوّد متاح (شبكة الحماية تردّ بـ403 على الطلبات العادية) وجلسة المتصفح موجودة.",
+    connDetailNoProfile: "موقع المزوّد متاح، لكن لا يوجد بروفايل متصفح بعد — سجّل الدخول أولًا.",
+    connDetailNoSession: "موقع المزوّد متاح، لكن بروفايل المتصفح لا يحمل جلسة نشطة.",
+    connDetailNoBrowser: "موقع المزوّد متاح، لكن لا يوجد متصفح (Chrome/Chromium) مثبّت.",
+    connDetailRateLimited: "المزوّد ردّ بـHTTP {status} (محدود المعدل).",
+    connDetailQuota: "المزوّد ردّ بـHTTP {status} (نفدت الحصة).",
+    connDetailAuthRequired: "المزوّد ردّ بـHTTP {status} (يلزم تسجيل الدخول).",
+    connDetailServerError: "المزوّد ردّ بـHTTP {status} (خطأ في الخادم).",
+    connTileLabel: "الاتصال",
+    modelsTileLabel: "النماذج",
+    modelsSelectedCount: "{count} محدَّد",
+    btnCheckChangesHint: "يقارن القائمة المكتشفة الحالية بآخر لقطة محفوظة",
+    btnViewChangesHint: "يفتح قائمة تغييرات النماذج لهذا المزوّد",
+    btnSaveModelsHint: "يحفظ اختيارك من النماذج",
+    btnOpenBrowserHint: "يفتح متصفح المزوّد تسجيلًا للدخول",
     cardResultDiscoveredWithChanges: "اكتمل الاكتشاف: {count} نموذج، منها {newCount} جديد",
     cardResultDiscoveryFailed: "فشل الاكتشاف: {error}",
     cardResultDeferred: "أُجّل الاكتشاف: {reason}",
@@ -4239,6 +4304,24 @@ const I18N = {
     toastDiscoveryDeferred: "Discovery postponed: {reason}",
     toastNoChanges: "No model changes detected.",
     cardResultDiscovered: "Discovery finished: {count} model(s) ({source})",
+    discoveryTileLabel: "Live discovery",
+    connDetailConnected: "Provider site reachable and the browser session is present.",
+    connDetailSelectedModelMissing: "Provider reachable, but the selected model is not present in the discovered model list.",
+    connDetailConnectedCdn: "Provider site reachable (its CDN answers plain requests with 403) and the browser session is present.",
+    connDetailNoProfile: "Provider site is reachable, but no browser profile exists yet — sign in first.",
+    connDetailNoSession: "Provider site is reachable, but the browser profile carries no active session.",
+    connDetailNoBrowser: "Provider site is reachable, but no Chromium build is installed for the browser adapters.",
+    connDetailRateLimited: "Provider answered HTTP {status} (rate limited).",
+    connDetailQuota: "Provider answered HTTP {status} (quota exhausted).",
+    connDetailAuthRequired: "Provider answered HTTP {status} (authentication required).",
+    connDetailServerError: "Provider answered HTTP {status} (server error).",
+    connTileLabel: "Connection",
+    modelsTileLabel: "Models",
+    modelsSelectedCount: "{count} selected",
+    btnCheckChangesHint: "Compares the current discovered list with the last saved snapshot",
+    btnViewChangesHint: "Opens the model changes of this provider",
+    btnSaveModelsHint: "Saves your model selection",
+    btnOpenBrowserHint: "Opens the provider browser to sign in",
     cardResultDiscoveredWithChanges: "Discovery finished: {count} model(s), {newCount} new",
     cardResultDiscoveryFailed: "Discovery failed: {error}",
     cardResultDeferred: "Discovery postponed: {reason}",
@@ -4804,6 +4887,24 @@ const I18N = {
     toastDiscoveryDeferred: "Découverte reportée : {reason}",
     toastNoChanges: "Aucun changement de modèle détecté.",
     cardResultDiscovered: "Découverte terminée : {count} modèle(s) ({source})",
+    discoveryTileLabel: "Découverte en direct",
+    connDetailConnected: "Site du fournisseur accessible et session du navigateur présente.",
+    connDetailSelectedModelMissing: "Fournisseur accessible, mais le modèle sélectionné n'est pas dans la liste détectée.",
+    connDetailConnectedCdn: "Site accessible (son CDN répond 403 aux requêtes simples) et session présente.",
+    connDetailNoProfile: "Site accessible, mais aucun profil de navigateur n'existe encore — connectez-vous d'abord.",
+    connDetailNoSession: "Site accessible, mais le profil ne contient aucune session active.",
+    connDetailNoBrowser: "Site accessible, mais aucun Chromium n'est installé pour les adaptateurs.",
+    connDetailRateLimited: "Le fournisseur a répondu HTTP {status} (débit limité).",
+    connDetailQuota: "Le fournisseur a répondu HTTP {status} (quota épuisé).",
+    connDetailAuthRequired: "Le fournisseur a répondu HTTP {status} (authentification requise).",
+    connDetailServerError: "Le fournisseur a répondu HTTP {status} (erreur serveur).",
+    connTileLabel: "Connexion",
+    modelsTileLabel: "Modèles",
+    modelsSelectedCount: "{count} sélectionné(s)",
+    btnCheckChangesHint: "Compare la liste découverte actuelle au dernier instantané enregistré",
+    btnViewChangesHint: "Ouvre les changements de modèles de ce fournisseur",
+    btnSaveModelsHint: "Enregistre votre sélection de modèles",
+    btnOpenBrowserHint: "Ouvre le navigateur du fournisseur pour se connecter",
     cardResultDiscoveredWithChanges: "Découverte terminée : {count} modèle(s), dont {newCount} nouveau(x)",
     cardResultDiscoveryFailed: "Échec de la découverte : {error}",
     cardResultDeferred: "Découverte reportée : {reason}",
@@ -5359,6 +5460,24 @@ const I18N = {
     toastDiscoveryDeferred: "Обнаружение отложено: {reason}",
     toastNoChanges: "Изменений моделей не обнаружено.",
     cardResultDiscovered: "Обнаружение завершено: {count} модель(ей) ({source})",
+    discoveryTileLabel: "Живое обнаружение",
+    connDetailConnected: "Сайт провайдера доступен, сессия браузера присутствует.",
+    connDetailSelectedModelMissing: "Провайдер доступен, но выбранной модели нет в обнаруженном списке.",
+    connDetailConnectedCdn: "Сайт доступен (его CDN отвечает 403 на обычные запросы), сессия присутствует.",
+    connDetailNoProfile: "Сайт доступен, но профиля браузера ещё нет — сначала войдите.",
+    connDetailNoSession: "Сайт доступен, но в профиле нет активной сессии.",
+    connDetailNoBrowser: "Сайт доступен, но не установлен Chromium для адаптеров.",
+    connDetailRateLimited: "Провайдер ответил HTTP {status} (ограничение частоты).",
+    connDetailQuota: "Провайдер ответил HTTP {status} (квота исчерпана).",
+    connDetailAuthRequired: "Провайдер ответил HTTP {status} (нужна аутентификация).",
+    connDetailServerError: "Провайдер ответил HTTP {status} (ошибка сервера).",
+    connTileLabel: "Подключение",
+    modelsTileLabel: "Модели",
+    modelsSelectedCount: "выбрано: {count}",
+    btnCheckChangesHint: "Сравнивает текущий обнаруженный список с последним сохранённым снимком",
+    btnViewChangesHint: "Открывает изменения моделей этого провайдера",
+    btnSaveModelsHint: "Сохраняет ваш выбор моделей",
+    btnOpenBrowserHint: "Открывает браузер провайдера для входа",
     cardResultDiscoveredWithChanges: "Обнаружение завершено: {count} модель(ей), новых: {newCount}",
     cardResultDiscoveryFailed: "Не удалось выполнить обнаружение: {error}",
     cardResultDeferred: "Обнаружение отложено: {reason}",
@@ -5914,6 +6033,24 @@ const I18N = {
     toastDiscoveryDeferred: "Descubrimiento aplazado: {reason}",
     toastNoChanges: "No se detectaron cambios de modelos.",
     cardResultDiscovered: "Descubrimiento completado: {count} modelo(s) ({source})",
+    discoveryTileLabel: "Descubrimiento en vivo",
+    connDetailConnected: "Sitio del proveedor accesible y sesión del navegador presente.",
+    connDetailSelectedModelMissing: "Proveedor accesible, pero el modelo seleccionado no está en la lista detectada.",
+    connDetailConnectedCdn: "Sitio accesible (su CDN responde 403 a las peticiones simples) y sesión presente.",
+    connDetailNoProfile: "Sitio accesible, pero aún no existe un perfil de navegador — inicia sesión primero.",
+    connDetailNoSession: "Sitio accesible, pero el perfil no tiene ninguna sesión activa.",
+    connDetailNoBrowser: "Sitio accesible, pero no hay Chromium instalado para los adaptadores.",
+    connDetailRateLimited: "El proveedor respondió HTTP {status} (límite de tasa).",
+    connDetailQuota: "El proveedor respondió HTTP {status} (cuota agotada).",
+    connDetailAuthRequired: "El proveedor respondió HTTP {status} (autenticación requerida).",
+    connDetailServerError: "El proveedor respondió HTTP {status} (error del servidor).",
+    connTileLabel: "Conexión",
+    modelsTileLabel: "Modelos",
+    modelsSelectedCount: "{count} seleccionado(s)",
+    btnCheckChangesHint: "Compara la lista detectada actual con la última instantánea guardada",
+    btnViewChangesHint: "Abre los cambios de modelos de este proveedor",
+    btnSaveModelsHint: "Guarda tu selección de modelos",
+    btnOpenBrowserHint: "Abre el navegador del proveedor para iniciar sesión",
     cardResultDiscoveredWithChanges: "Descubrimiento completado: {count} modelo(s), {newCount} nuevo(s)",
     cardResultDiscoveryFailed: "Error en el descubrimiento: {error}",
     cardResultDeferred: "Descubrimiento aplazado: {reason}",
@@ -6469,6 +6606,24 @@ const I18N = {
     toastDiscoveryDeferred: "发现已延后：{reason}",
     toastNoChanges: "未检测到模型变更。",
     cardResultDiscovered: "发现完成：{count} 个模型（{source}）",
+    discoveryTileLabel: "实时发现",
+    connDetailConnected: "提供方站点可达，且浏览器会话存在。",
+    connDetailSelectedModelMissing: "提供方可达，但所选模型不在发现的列表中。",
+    connDetailConnectedCdn: "站点可达（其 CDN 对普通请求返回 403），且会话存在。",
+    connDetailNoProfile: "站点可达，但尚无浏览器配置——请先登录。",
+    connDetailNoSession: "站点可达，但浏览器配置中没有活跃会话。",
+    connDetailNoBrowser: "站点可达，但未安装适配器所需的 Chromium。",
+    connDetailRateLimited: "提供方返回 HTTP {status}（速率受限）。",
+    connDetailQuota: "提供方返回 HTTP {status}（配额耗尽）。",
+    connDetailAuthRequired: "提供方返回 HTTP {status}（需要登录）。",
+    connDetailServerError: "提供方返回 HTTP {status}（服务器错误）。",
+    connTileLabel: "连接",
+    modelsTileLabel: "模型",
+    modelsSelectedCount: "已选 {count}",
+    btnCheckChangesHint: "将当前发现的列表与上次保存的快照进行对比",
+    btnViewChangesHint: "打开该提供方的模型变更列表",
+    btnSaveModelsHint: "保存你选择的模型",
+    btnOpenBrowserHint: "打开提供方浏览器以便登录",
     cardResultDiscoveredWithChanges: "发现完成：{count} 个模型，其中 {newCount} 个新增",
     cardResultDiscoveryFailed: "发现失败：{error}",
     cardResultDeferred: "发现已延后：{reason}",
@@ -7159,6 +7314,18 @@ function locAccEmail(email){
   if(!email || ACCOUNT_EMAIL_SENTINEL.has(email)) return t('activeBrowserSession');
   return email;
 }
+/**
+ * Formats an ISO timestamp as a short local time ("13:38" / "13:38:04").
+ * The raw ISO string is unreadable in an RTL card and overflows the tiles.
+ */
+function fmtStamp(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  if(Number.isNaN(d.getTime())) return String(iso);
+  const p2=(n)=>String(n).padStart(2,'0');
+  return p2(d.getHours()) + ':' + p2(d.getMinutes()) + (d.getDate() !== new Date().getDate() ? ' · ' + p2(d.getMonth()+1) + '/' + p2(d.getDate()) : '');
+}
+
 function fmtUptime(ms){
   ms = Math.max(0, ms||0);
   const s = Math.floor(ms/1000);
@@ -8778,27 +8945,15 @@ function renderProvidersGrid(providers, force=false){
     const modelsError = cardView.models.lastError || clientRefreshError;
     const connError = clientTestError;
 
-    const modelsMetaHtml =
-      '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--text-muted)">' +
-        '<span class="badge ' + toneClass(cardView.models.tone) + '">' + esc(t('modelsSourceLabel')) + ': ' + esc(t(cardView.models.sourceLabelKey)) + '</span>' +
-        '<span>' + esc(cardView.models.lastRefreshAt ? t('modelsLastRefreshAt', { ts: cardView.models.lastRefreshAt }) : t('modelsNeverRefreshed')) + '</span>' +
-        (cardView.models.lastRefreshCount != null ? '<span>(' + esc(String(cardView.models.lastRefreshCount)) + ')</span>' : '') +
-      '</div>' +
-      (modelsError
-        ? '<div style="font-size:11px;color:var(--danger);margin-top:3px">⚠ ' + esc(modelsError) + '</div>'
-        : '');
+    const statusTile = (label, valueHtml, subHtml) =>
+      '<div class="provider-status-tile">' +
+        '<div class="provider-status-label">' + esc(label) + '</div>' +
+        '<div class="provider-status-value">' + valueHtml + '</div>' +
+        (subHtml
+          ? '<div class="provider-status-sub" title="' + esc(String(subHtml).replace(/<[^>]+>/g, ' ').trim()) + '">' + subHtml + '</div>'
+          : '') +
+      '</div>';
 
-    const connMetaHtml =
-      '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--text-muted)">' +
-        '<span class="badge ' + toneClass(cardView.connection.tone) + '">' + esc(t('connStatusLabel')) + ': ' + esc(t(cardView.connection.labelKey)) + '</span>' +
-        '<span>' + esc(cardView.connection.checkedAt ? t('connLastCheckAt', { ts: cardView.connection.checkedAt }) : t('connStatusNeverChecked')) + '</span>' +
-      '</div>' +
-      (cardView.connection.detail
-        ? '<div style="font-size:11px;color:var(--text-dim);margin-top:3px">' + esc(cardView.connection.detail) + '</div>'
-        : '') +
-      (connError
-        ? '<div style="font-size:11px;color:var(--danger);margin-top:3px">⚠ ' + esc(connError) + '</div>'
-        : '');
 
     const refreshDisabled = cardView.refresh.disabled || refreshBusy;
     const refreshLabel = refreshBusy ? '⟳ ' + t(cardView.refresh.busyLabelKey) : t(cardView.refresh.labelKey);
@@ -8816,16 +8971,44 @@ function renderProvidersGrid(providers, force=false){
     const discoveryBusy = providerCardBusy.has(busyKey('discoverModels'));
     const discoverDisabled = discoveryBusy || discovery.status === 'unsupported';
 
-    const discoveryMetaHtml =
-      '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--text-muted)">' +
-        '<span class="badge ' + toneClass(discovery.tone) + '">' + esc(t(discovery.labelKey)) + '</span>' +
-        (discovery.modelCount != null ? '<span>' + esc(t('discoveryModelsFound', { count: discovery.modelCount })) + '</span>' : '') +
-        (discovery.newModelCount ? '<span class="badge badge-success">' + esc(t('discoveryNewModels', { count: discovery.newModelCount })) + '</span>' : '') +
-        (discovery.unreadChanges ? '<span class="badge badge-warn" data-act="viewChanges" data-id="' + esc(p.id) + '" style="cursor:pointer">' + esc(t('notifUnread', { count: discovery.unreadChanges })) + '</span>' : '') +
-        '<span>' + esc(discovery.lastSuccessAt ? t('discoveryLastScan', { ts: discovery.lastSuccessAt }) : t('discoveryNeverScanned')) + '</span>' +
+    // ---- three compact status tiles: live discovery · connection · models
+    const statusTilesHtml =
+      '<div class="provider-status-grid">' +
+        statusTile(
+          t('discoveryTileLabel'),
+          '<span class="badge ' + toneClass(discovery.tone) + '">' + esc(t(discovery.labelKey)) + '</span>' +
+            (discovery.modelCount != null ? '<span>' + esc(t('discoveryModelsFound', { count: discovery.modelCount })) + '</span>' : '') +
+            (discovery.newModelCount ? '<span class="badge badge-success">' + esc(t('discoveryNewModels', { count: discovery.newModelCount })) + '</span>' : '') +
+            (discovery.unreadChanges ? '<span class="badge badge-warn" data-act="viewChanges" data-id="' + esc(p.id) + '" style="cursor:pointer">' + esc(t('notifUnread', { count: discovery.unreadChanges })) + '</span>' : ''),
+          discovery.lastSuccessAt ? esc(t('discoveryLastScan', { ts: fmtStamp(discovery.lastSuccessAt) })) : esc(t('discoveryNeverScanned')),
+        ) +
+        statusTile(
+          t('connTileLabel'),
+          '<span class="badge ' + toneClass(cardView.connection.tone) + '">' + esc(t(cardView.connection.labelKey)) + '</span>' +
+            (cardView.connection.latencyMs != null ? '<span>' + esc(String(cardView.connection.latencyMs)) + 'ms</span>' : ''),
+          cardView.connection.checkedAt ? esc(t('connLastCheckAt', { ts: fmtStamp(cardView.connection.checkedAt) })) : esc(t('connStatusNeverChecked')),
+        ) +
+        statusTile(
+          t('modelsTileLabel'),
+          '<span>' + esc(t('discoveryModelsFound', { count: cardView.models.availableCount })) + '</span>' +
+            (cardView.models.selectedCount ? '<span class="badge">' + esc(t('modelsSelectedCount', { count: cardView.models.selectedCount })) + '</span>' : ''),
+          esc(t(cardView.models.sourceLabelKey)) +
+            (cardView.models.lastRefreshAt ? ' · ' + esc(t('modelsLastRefreshAt', { ts: fmtStamp(cardView.models.lastRefreshAt) })) : ''),
+        ) +
       '</div>' +
       (discovery.detail
-        ? '<div style="font-size:11px;color:var(--text-dim);margin-top:3px">' + esc(discovery.detail) + '</div>'
+        ? '<div style="font-size:11px;color:var(--text-dim)">🔎 ' + esc(discovery.detail) + '</div>'
+        : '') +
+      (cardView.connection.detail
+        ? '<div style="font-size:11px;color:var(--text-dim)">⚡ ' +
+            esc(cardView.connection.detailKey ? t(cardView.connection.detailKey, cardView.connection.detailParams || {}) : cardView.connection.detail) +
+          '</div>'
+        : '') +
+      (connError
+        ? '<div style="font-size:11px;color:var(--danger)">⚠ ' + esc(connError) + '</div>'
+        : '') +
+      (modelsError
+        ? '<div style="font-size:11px;color:var(--danger)">⚠ ' + esc(modelsError) + '</div>'
         : '');
 
     const isHeadless = p.settings?.headless !== false;
@@ -8871,35 +9054,29 @@ function renderProvidersGrid(providers, force=false){
             : '') +
         '</div>' +
 
-        '<div style="display:flex;justify-content:space-between;align-items:center">' +
-          '<span style="font-size:12px;font-weight:600">' + t('availableModelsCount') + ' (' + (cardView.models.availableCount || 0) + ')</span>' +
+        statusTilesHtml +
+
+        '<div class="provider-models-head">' +
+          '<span>' + esc(t('modelsTileLabel')) + ' (' + (cardView.models.availableCount || 0) + ')</span>' +
           '<div style="display:flex;gap:4px">' +
             '<button class="btn-sm" data-act="selectAll" data-id="' + esc(p.id) + '">' + t('btnAllShort') + '</button>' +
             '<button class="btn-sm" data-act="deselectAll" data-id="' + esc(p.id) + '">' + t('btnNoneShort') + '</button>' +
           '</div>' +
         '</div>' +
-
-        modelsMetaHtml +
-        connMetaHtml +
-        discoveryMetaHtml +
-
         '<div class="models-container">' + modelsHtml + '</div>' +
 
-        '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;flex-wrap:wrap;gap:6px">' +
-          '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-            '<button class="btn-sm" data-act="discoverModels" data-id="' + esc(p.id) + '"' + (discoverDisabled ? ' disabled' : '') + ' title="' + esc(t('btnDiscoverModelsHint')) + '">' + esc(discoveryBusy ? '⟳ ' + t('btnWorking') : t('btnDiscoverModels')) + '</button>' +
-            '<button class="btn-sm" data-act="checkChanges" data-id="' + esc(p.id) + '">' + esc(t('btnCheckChanges')) + '</button>' +
-            '<button class="btn-sm" data-act="viewChanges" data-id="' + esc(p.id) + '">' + esc(t('btnViewChanges')) + '</button>' +
-            '<button class="btn-primary btn-sm" data-act="saveModels" data-id="' + esc(p.id) + '">' + t('btnSaveModels') + '</button>' +
-            '<button class="btn-sm" data-act="refreshModels" data-id="' + esc(p.id) + '"' + (refreshDisabled ? ' disabled' : '') + ' title="' + esc(t(cardView.refresh.reasonKey || cardView.models.sourceLabelKey)) + '">' + esc(refreshLabel) + '</button>' +
-          '</div>' +
-          '<div style="display:flex;gap:6px">' +
-            '<button class="btn-sm" data-act="testConnection" data-id="' + esc(p.id) + '"' + (testDisabled ? ' disabled' : '') + ' title="' + esc(t((p.capabilities && p.capabilities.connectionCheckNoteKey) || 'connCheckWebProfile')) + '">' + esc(testLabel) + '</button>' +
-            '<button class="btn-sm" data-act="login" data-id="' + esc(p.id) + '">' + t('btnOpenBrowser') + '</button>' +
-            '<button class="btn-sm" data-act="toggleEnabled" data-id="' + esc(p.id) + '" data-enabled="' + (p.enabled?1:0) + '">' +
-              (p.enabled ? t('btnDisable') : t('btnEnable')) +
-            '</button>' +
-          '</div>' +
+        '<div class="provider-actions">' +
+          '<button class="btn-primary btn-sm" data-act="discoverModels" data-id="' + esc(p.id) + '"' + (discoverDisabled ? ' disabled' : '') + ' title="' + esc(t('btnDiscoverModelsHint')) + '">' + esc(discoveryBusy ? '⟳ ' + t('btnWorking') : t('btnDiscoverModels')) + '</button>' +
+          '<button class="btn-sm" data-act="checkChanges" data-id="' + esc(p.id) + '" title="' + esc(t('btnCheckChangesHint')) + '">' + esc(t('btnCheckChanges')) + '</button>' +
+          '<button class="btn-sm" data-act="viewChanges" data-id="' + esc(p.id) + '" title="' + esc(t('btnViewChangesHint')) + '">' + esc(t('btnViewChanges')) + '</button>' +
+          '<button class="btn-sm" data-act="saveModels" data-id="' + esc(p.id) + '" title="' + esc(t('btnSaveModelsHint')) + '">' + t('btnSaveModels') + '</button>' +
+          '<button class="btn-sm" data-act="refreshModels" data-id="' + esc(p.id) + '"' + (refreshDisabled ? ' disabled' : '') + ' title="' + esc(t(cardView.refresh.reasonKey || cardView.models.sourceLabelKey)) + '">' + esc(refreshLabel) + '</button>' +
+          '<span style="flex:1 1 auto"></span>' +
+          '<button class="btn-sm" data-act="testConnection" data-id="' + esc(p.id) + '"' + (testDisabled ? ' disabled' : '') + ' title="' + esc(t((p.capabilities && p.capabilities.connectionCheckNoteKey) || 'connCheckWebProfile')) + '">' + esc(testLabel) + '</button>' +
+          '<button class="btn-sm" data-act="login" data-id="' + esc(p.id) + '" title="' + esc(t('btnOpenBrowserHint')) + '">' + t('btnOpenBrowser') + '</button>' +
+          '<button class="btn-sm" data-act="toggleEnabled" data-id="' + esc(p.id) + '" data-enabled="' + (p.enabled?1:0) + '">' +
+            (p.enabled ? t('btnDisable') : t('btnEnable')) +
+          '</button>' +
         '</div>' +
         resultLineHtml +
       '</div>';

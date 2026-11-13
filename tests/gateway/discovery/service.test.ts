@@ -39,6 +39,61 @@ class FakeRunner implements DiscoveryRunner {
   }
 }
 
+describe('The discovery publishes the discovered models to the provider list', () => {
+  let dir: string;
+  let runner: FakeRunner;
+  let service: ModelDiscoveryService;
+  let published: Array<{ id: string; models: any[] }>;
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'discovery-publish-'));
+    runner = new FakeRunner();
+    published = [];
+    service = new ModelDiscoveryService({
+      runner,
+      snapshots: new ModelSnapshotStore(path.join(dir, 'snapshots.json')),
+      notifications: new NotificationStore(path.join(dir, 'notifications.json')),
+      providerName: (id) => id,
+      profileDirFor: () => '/tmp/profile',
+      now: () => NOW,
+      applyDiscoveredModels: async (id, models) => {
+        published.push({ id, models });
+      },
+    });
+  });
+
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('hands the discovered models to the provider so the card list is refreshed', async () => {
+    runner.defaultResult = {
+      providerId: 'claude-web',
+      source: 'web-ui-dom',
+      complete: true,
+      discoveredAt: new Date(NOW).toISOString(),
+      models: [model('claude-sonnet-5-5', 'Sonnet 5.5')],
+    };
+    await service.discover('claude-web');
+    expect(published).toHaveLength(1);
+    expect(published[0].id).toBe('claude-web');
+    expect(published[0].models.map((m) => m.providerModelId)).toEqual(['claude-sonnet-5-5']);
+  });
+
+  it('does NOT publish anything when the scan failed', async () => {
+    runner.defaultResult = {
+      providerId: 'claude-web',
+      source: 'none',
+      complete: false,
+      discoveredAt: new Date(NOW).toISOString(),
+      models: [],
+      failureReason: 'model_picker_not_found',
+    };
+    await service.discover('claude-web');
+    expect(published).toHaveLength(0);
+  });
+});
+
 describe('Model discovery service', () => {
   let dir: string;
   let runner: FakeRunner;
