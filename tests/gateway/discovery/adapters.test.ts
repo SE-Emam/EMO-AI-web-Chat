@@ -100,12 +100,12 @@ describe('Discovery adapters — DOM strategy (per provider fixtures)', () => {
     const elements: ElementFixture[] = [
       // The site header always renders this — even for signed-in users.
       { selectors: ['button:has-text("Log in")'], text: 'Log in', visible: true },
-      { selectors: ['button[aria-label="Switch model"]'], text: 'Quick Answer', visible: true, reveals: ['[role="menuitemradio"]'] },
-      { selectors: ['[role="menuitemradio"]'], text: 'hunyuan-turbo', attrs: { 'data-model-id': 'hunyuan-turbo' } },
+      { selectors: ['div.home4-model-ctrl'], text: 'Hy4', visible: true, reveals: ['li.home4-model-ctrl__item'] },
+      { selectors: ['li.home4-model-ctrl__item'], text: 'Hy4', attrs: { title: 'Hy4' } },
     ];
     const result = await discoverModelsFromDom('tencent-ai-web', adapter.dom!, ctx(fixturePage(elements)));
     expect(result.failureReason).toBeUndefined();
-    expect(result.models.map((m) => m.providerModelId)).toEqual(['hunyuan-turbo']);
+    expect(result.models.map((m) => m.displayName)).toEqual(['Hy4']);
   });
 
   it('reports authentication_required when the opened menu is a sign-in / paywall prompt', async () => {
@@ -123,7 +123,7 @@ describe('Discovery adapters — DOM strategy (per provider fixtures)', () => {
   it('reports authentication_required when the page has NO composer and asks for a sign-in', async () => {
     const adapter = getDiscoveryAdapter('tencent-ai-web')!;
     const elements: ElementFixture[] = [
-      { selectors: ['button[aria-label="Switch model"]'], text: 'Quick Answer', visible: true },
+      { selectors: ['div.home4-model-ctrl'], text: 'Hy4', visible: true },
       // The signed-out landing screen of the provider.
       { selectors: ['.anything'], text: 'Not logged in Log In' },
     ];
@@ -134,7 +134,7 @@ describe('Discovery adapters — DOM strategy (per provider fixtures)', () => {
   it('does NOT report a signed-out page when the composer is present', async () => {
     const adapter = getDiscoveryAdapter('tencent-ai-web')!;
     const elements: ElementFixture[] = [
-      { selectors: ['button[aria-label="Switch model"]'], text: 'Quick Answer', visible: true },
+      { selectors: ['div.home4-model-ctrl'], text: 'Hy4', visible: true },
       { selectors: ['.header'], text: 'Sign in' },
       // The chat composer is there -> the session works.
       { selectors: ['textarea'], text: 'Ask anything', visible: true },

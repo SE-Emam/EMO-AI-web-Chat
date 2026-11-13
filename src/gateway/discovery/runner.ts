@@ -18,6 +18,7 @@ import { cleanupStaleProfileLocks } from '../../browser/manager.js';
 import { getDiscoveryAdapter } from './adapters.js';
 import { discoverModelsFromDom } from './dom-strategy.js';
 import { discoverModelsFromNetwork, type CapturedResponse } from './network-strategy.js';
+import { discoverModelsFromEmbeddedCatalog } from './embedded-strategy.js';
 import type {
   DiscoveryPage,
   ModelDiscoveryResult,
@@ -205,7 +206,7 @@ export class PlaywrightDiscoveryRunner implements DiscoveryRunner {
             if (!/json|text|javascript/i.test(ct)) return;
             if (res.status() >= 400) return;
             const body = await res.text().catch(() => '');
-            if (!body || body.length > 2_000_000) return;
+            if (!body || body.length > 8_000_000) return;
             captured.push({ url, status: res.status(), body, contentType: ct });
           } catch {
             /* ignore */
@@ -257,6 +258,8 @@ export class PlaywrightDiscoveryRunner implements DiscoveryRunner {
           attempt = await discoverModelsFromDom(options.providerId, adapter.dom, ctxArgs);
         } else if (strategy === 'network' && adapter.network && adapter.network.urlPatterns.length > 0) {
           attempt = await discoverModelsFromNetwork(options.providerId, adapter.network, ctxArgs, captured);
+        } else if (strategy === 'embedded' && adapter.embedded) {
+          attempt = await discoverModelsFromEmbeddedCatalog(options.providerId, adapter.embedded, ctxArgs);
         }
         if (!attempt) continue;
 

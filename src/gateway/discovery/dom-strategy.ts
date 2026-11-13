@@ -267,6 +267,21 @@ export async function discoverModelsFromDom(
     return fail('authentication_required', 'The provider is showing a sign-in page — the browser session is not authenticated.');
   }
 
+  // 0. Dismiss blocking overlays (cookie/consent banners) so the picker can
+  //    actually be opened. Read-only: the site simply stops showing the
+  //    banner in this browser session.
+  for (const sel of config.dismissSelectors || []) {
+    try {
+      const loc = page.locator(sel).first();
+      if ((await loc.count()) === 0) continue;
+      if (!(await loc.isVisible())) continue;
+      await loc.click({ timeout: 6000, force: true });
+      await page.waitForTimeout(800);
+    } catch {
+      /* ignore */
+    }
+  }
+
   // 1. Open the picker.
   let opened = false;
   for (const sel of config.openPickerSelectors) {

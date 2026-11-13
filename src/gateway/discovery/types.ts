@@ -13,6 +13,7 @@
  *    empty list and never a fallback to a static catalog.
  */
 import type { Page } from 'playwright';
+import type { EmbeddedCatalogConfig } from './embedded-strategy.js';
 
 export type DiscoverySource = 'web-ui' | 'web-ui-dom' | 'web-ui-network' | 'api' | 'none';
 
@@ -116,7 +117,7 @@ export interface DiscoveryContext {
 }
 
 /** One strategy a provider can use to read its model list. */
-export type DiscoveryStrategy = 'dom' | 'network' | 'api';
+export type DiscoveryStrategy = 'dom' | 'network' | 'embedded' | 'api';
 
 export interface WebModelDiscoveryAdapter {
   providerId: string;
@@ -130,6 +131,8 @@ export interface WebModelDiscoveryAdapter {
   dom?: DomDiscoveryConfig;
   /** Network strategy configuration (the provider's OWN model request). */
   network?: NetworkDiscoveryConfig;
+  /** Embedded-catalog configuration (the provider's own page payload). */
+  embedded?: EmbeddedCatalogConfig;
   /**
    * True when this provider's model list is proven to be discoverable.
    * A provider without proof must report `discovery_unsupported` instead of
@@ -151,6 +154,11 @@ export interface DomDiscoveryConfig {
   expandSelectors?: string[];
   /** Selectors that prove the page is a login wall. */
   loginWallSelectors?: string[];
+  /**
+   * Overlays that BLOCK the model picker (cookie banners, consent walls).
+   * They are dismissed first so the picker can be opened.
+   */
+  dismissSelectors?: string[];
   /**
    * Selectors of the chat composer. When the page shows a sign-in prompt but
    * has NO composer, the session is not authenticated.

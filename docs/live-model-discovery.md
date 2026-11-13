@@ -28,8 +28,9 @@
 src/gateway/discovery/
 ├── types.ts             العقد: WebModelDiscoveryAdapter · DiscoveredWebModel · ModelDiscoveryResult
 ├── adapters.ts          15 Adapter لكل مزود (selectors ونقاط دخول مُثبَتة ميدانيًا)
-├── dom-strategy.ts      استخراج من DOM: picker · pagination · virtual scroll · login-wall
+├── dom-strategy.ts      استخراج من DOM: picker · pagination · virtual scroll · login-wall · dismiss
 ├── network-strategy.ts  قراءة قائمة النماذج من طلب الموقع نفسه (observed + replay)
+├── embedded-strategy.ts كتالوج مدمج في بيانات صفحة الموقع (embedded JSON state)
 ├── runner.ts            جلسة متصفح آمنة: Profile + OwnershipLedger + headless/headed
 ├── snapshot-store.ts    حفظ Snapshots دائم (كتابة ذرّية) — ~/.arena-webbridge/
 ├── diff-engine.ts       مقارنة + قاعدة «فحصان متتاليان» لتأكيد الحذف
@@ -160,37 +161,50 @@ service.discover()
 > البروفايلات (لأن البروفايلات الحقيقية لا تُفتح أثناء الفحص) وبوضع **headed**
 > حيث ترفض المواقع المتصفح headless.
 
-| المزوّد | النتيجة الحية | معرّفات ثابتة | ملاحظة |
-|---|---|---|---|
-| claude-web | ✅ 13 نموذج | 13 | يحتاج headed (Cloudflare) |
-| arena-browser | ✅ 18 | 18 | `cmdk-item` + `data-model-id` |
-| kimi-web | ✅ 11 | 11 | من طلب `GetAvailableModels` |
-| kiwi-web | ✅ 5 | 5 | من `/v1/models` |
-| chatgpt-web | ✅ 4 | 4 | من `/backend-api/models` (يحتاج headed) |
-| zai-web | ✅ 3 | 3 | `data-value` |
-| qwen-web | ✅ 3 | 3 | من `/api/v2/models/` |
-| gemini-web | ✅ 2 | 2 | `data-mode-id` |
-| minimax-web | ✅ 2 | 2 | من `/minimax-cloud/api/v1/config` |
-| tencent-ai-web | ⛔ `authentication_required` | — | البروفايل غير مسجّل |
-| grok-web | ⛔ `authentication_required` | — | القائمة خلف paywall |
-| deepseek-web | ⛔ `authentication_required` | — | تحويل إلى Google Sign-in |
-| mistral-web | ⛔ `site_layout_changed` | — | لا يظهر غير قائمة الاستدلال (Fast/Think) |
-| longcat-web | ⛔ `model_picker_not_found` | — | `/chat/` يحوّل إلى صفحة الهبوط |
-| llm7-web | ⛔ `provider_unavailable` | — | الموقع لا يستجيب (`ERR_CONNECTION_TIMED_OUT`) |
+| المزوّد | الاستراتيجية | النتيجة الحية | معرّفات ثابتة | ملاحظة |
+|---|---|---|---|---|
+| arena-browser | DOM (`cmdk-item`) | ✅ 18 نموذج | 18 | `data-model-id` (معرّفات UUID داخلية) |
+| claude-web | DOM (`data-model-id`) | ✅ 13 | 13 | `claude-sonnet-5-5` … — يحتاج headed |
+| kimi-web | Network (`GetAvailableModels`) | ✅ 11 | 11 | `k3d1-agent`, `k28-instant` … |
+| kiwi-web | Network (`/v1/models`) | ✅ 5 | 5 | `nemotron-3-ultra` … |
+| chatgpt-web | Network (`/backend-api/models`) | ✅ 4 | 4 | `gpt-5-6`, `gpt-6` … — يحتاج headed |
+| mistral-web | Embedded (`vcw_model_catalog`) | ✅ 4 | 4 | `mistral-large-4-0`, `zai-glm-5-3` … |
+| zai-web | DOM (`data-value`) | ✅ 3 | 3 | `glm-5.3`, `glm-5.2` … |
+| qwen-web | Network (`/api/v2/models/`) | ✅ 3 | 3 | `qwen3.7-plus`, `qwen3.8-max` … |
+| deepseek-web | Network (`settings?scope=model`) | ✅ 3 | 3 | `default`/Instant, `expert`, `vision` |
+| gemini-web | DOM (`data-mode-id`) | ✅ 2 | 2 | `argon`, `cf41b0e0…` |
+| minimax-web | Network (`/minimax-cloud/api/v1/config`) | ✅ 2 | 2 | `MiniMax-M3.1-Flash`, `MiniMax-M3` |
+| tencent-ai-web | Network (`modelTabInfo`) | ✅ 2 | 2 | `hy4-g`/Hy4, `hy3-g`/Hy3 — على `aistudio.tencent.ai` |
+| grok-web | DOM (`menuitemcheckbox`) | ✅ 5 | **0** | أسماء أوضاع فقط (Fast/Build/Auto/Expert/Heavy) ⇒ `display-name-only` |
+| longcat-web | — | ⛔ | — | **يتطلب رقمًا صينيًا** — الواجهة تُستخدم بلا حساب مؤقتًا |
+| llm7-web | — | ⛔ | — | الموقع لا يستجيب (`ERR_CONNECTION_TIMED_OUT`) |
 
-**المجموع: 9 من 15 مزودًا** اكتشافًا حيًّا بمعرّفات ثابتة (61 معرّفًا)،
-والستة المتبقية **تُعلن عائقها بدقة** — لا رجوع صامت إلى قائمة ثابتة.
+**المجموع: 13 من 15 مزودًا** يُكتشف نماذجها حيًّا (75 نموذجًا، منها 71 بمعرّف ثابت)،
+والمزوّدان المتبقيان **يُعلان عائقهما بدقّة** — لا رجوع صامت إلى قائمة ثابتة:
+
+* **longcat-web** — التسجيل يتطلب **رقمًا صينيًا**؛ الواجهة تُستخدم مؤقتًا بلا حساب،
+  لذلك لا يمكن إثبات قائمة نماذجها. الحل: توفير رقم صيني ثم إعادة الفحص.
+* **llm7-web** — الموقع لا يستجيب من هذه الشبكة؛ `replayPaths: ['/v1/models']`
+  جاهزة إن عاد الموقع.
 
 ### العوائق المتبقية والحل المطلوب
 
 | المزوّد | العائق | الحل |
 |---|---|---|
-| tencent-ai-web | البروفايل غير مسجّل | تسجيل الدخول (نافذة مفتوحة) ثم إعادة الفحص |
-| grok-web | paywall بلا جلسة | بروفايل Grok مسجّل |
-| deepseek-web | Google OAuth | حساب DeepSeek مسجّل |
-| mistral-web | لا يوجد picker بلا جلسة | حساب Mistral مسجّل |
-| longcat-web | `/chat/` → صفحة هبوط | تحديد رابط التطبيق الحقيقي |
-| llm7-web | الموقع معطّل/محجوب | تحقق من التوفر + `replayPaths: ['/v1/models']` جاهز |
+| longcat-web | التسجيل يتطلب **رقمًا صينيًا** | توفير الرقم ثم إعادة الفحص (الـadapter جاهز) |
+| llm7-web | الموقع لا يستجيب (`ERR_CONNECTION_TIMED_OUT`) | تحقق من التوفر — الـreplay جاهز |
+
+### الجلسات المستخدمة في الفحص الحيّ
+
+| المزوّد | البروفايل | الكوكيز المحفوظة |
+|---|---|---|
+| tencent-ai-web | `tencent-aistudio-profile` | `hunyuan_token`, `hunyuan_user` |
+| grok-web | `grok-profile` | `sa-user-id`, `sa-user-id-v2/v4` |
+| deepseek-web | `deepseek-profile` | `ds_session_id`, `smidV2` |
+| mistral-web | `mistral-profile` | `browser-session-id`, kratos browser cookie |
+| longcat-web | `longcat-profile` | `logan_session_token` (بلا تسجيل) |
+
+> الكوكيز محفوظة على القرص داخل البروفايل ⇒ **لا حاجة لإعادة تسجيل الدخول**.
 
 ---
 
@@ -198,6 +212,7 @@ service.discover()
 
 | الملف | التغطية |
 |---|---|
+| `tests/gateway/discovery/strategies.test.ts` | الكتالوج المدمج · استخراج `modelName`/`model_type` ·ismiss الـconsent · عناصر Grok |
 | `tests/gateway/discovery/adapters.test.ts` | لكل مزود **fixture خاص به**: استخراج المعرّفات، أسماء العرض، pagination، virtual scroll، قائمة فارغة، picker مفقود، جدار دخول، paywall، تغيّر Selector، انقطاع الشبكة |
 | `tests/gateway/discovery/diff-engine.test.ts` | الأنواع الخمسة + baseline + قاعدة الحذف المؤكد + تأكيد إعادة التسمية |
 | `tests/gateway/discovery/stores.test.ts` | Snapshots (ذرّية، دائمة، لا تُستبدل عند الفشل، بلا أسرار) + الإشعارات (دائمة، read/unread، منع تكرار) |
@@ -205,7 +220,7 @@ service.discover()
 | `tests/gateway/discovery-routes.test.ts` | مسارات HTTP: discover · notifications · read · read-all · status |
 | `tests/gateway/provider-ui.test.ts` | تنفيذ **سكربت الواجهة الحقيقي** داخل `vm`: أزرار الاكتشاف، مركز الإشعارات، منع الضغط المزدوج |
 
-**إجمالي الاختبارات:** 809 ناجح (0 فاشل) — منها 82 جديدة لهذه المهمة.
+**إجمالي الاختبارات:** 819 ناجح (0 فاشل) — منها 92 جديدة لهذه المهمة.
 
 ### عيوب حقيقية كشفتها الاختبارات وأُصلحت
 

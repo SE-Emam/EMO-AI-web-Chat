@@ -232,63 +232,48 @@ export const DISCOVERY_ADAPTERS: Record<WebProviderId, WebModelDiscoveryAdapter>
   'tencent-ai-web': {
     providerId: 'tencent-ai-web',
     entryUrl: 'https://aistudio.tencent.ai/',
-    strategies: ['dom', 'network'],
-    verified: false,
-    blocker:
-      'The "Switch model" trigger was located, but the registered local profile is not signed in to yuanbao ("Not logged in"), so the model submenu cannot be opened. A signed-in profile is required.',
-    dom: {
-      openPickerSelectors: [
-        'button[aria-label="Switch model"]',
-        '[data-thinking-mode-switcher-trigger]',
-        'div.mode-select-open',
-      ],
-      optionSelectors: ['[role="menuitemradio"]', '[role="option"]', '.mode-select-item', 'li'],
-      idAttributes: ['data-model-id', 'value', 'data-value'],
-      labelExtraction: 'text',
-      loginWallSelectors: ['form[action*="login" i]', 'input[type="password"]'],
-    },
+    strategies: ['network', 'dom'],
+    verified: true,
     network: {
-      // The provider's own traffic was inspected: `/api/info/public/general`
-      // carries ASSET urls (COS buckets), NOT a model list — matching it
-      // would invent models. It is deliberately not used as a model source.
-      urlPatterns: [],
-      idKeys: ['model_id', 'modelId', 'id', 'name'],
-      idPattern: '^(hunyuan-|turbo|deepseek|step|gemini|gpt)',
-      minModels: 2,
+      // The provider's OWN requests: the model tab info and the model list.
+      urlPatterns: ['/auditOpenAPI/model/modelTabInfo', '/auditOpenAPI/model/list'],
+      idKeys: ['modelName', 'model_name', 'model'],
+      idPattern: '^(hy\\d|hunyuan)',
+      minModels: 1,
       replayPaths: [],
+    },
+    dom: {
+      // The model control in the composer (TDesign select).
+      openPickerSelectors: ['div.home4-model-ctrl', '.t-select__wrap', '[class*="model-ctrl"]'],
+      optionSelectors: ['li.home4-model-ctrl__item', 'li.t-select-option'],
+      idAttributes: ['data-model-name', 'value'],
+      labelExtraction: 'attribute',
+      labelAttribute: 'title',
+      metadataAttributes: ['data-tag'],
+      loginWallSelectors: ['form[action*="login" i]', 'input[type="password"]'],
     },
   },
 
   'grok-web': {
     providerId: 'grok-web',
     entryUrl: 'https://grok.com/',
-    strategies: ['dom', 'network'],
-    verified: false,
-    blocker:
-      'The model control (button[aria-label^="Model:"]) opens, but an anonymous session only sees the paywall upsell ("Premium - Unlock extended capabilities - Sign in"). The real model list requires a signed-in Grok profile.',
+    strategies: ['dom'],
+    verified: true,
     dom: {
-      openPickerSelectors: [
-        'button[aria-label^="Model:"]',
-        'button[aria-label^="Model"]',
-        'button[aria-haspopup="menu"][class*="model" i]',
+      // The cookie banner blocks the model menu — dismiss it first.
+      dismissSelectors: [
+        'button:has-text("Accept All Cookies")',
+        'button[aria-label="Dismiss cookie notice"]',
+        'button[aria-label="Close"]',
       ],
-      // Only entries that carry a model id count — the paywall / "Unlock"
-      // upsell must never be reported as a model.
-      optionSelectors: [
-        '[role="menuitemradio"][data-value]',
-        '[role="menuitem"][data-model-id]',
-        '[role="option"][data-model-id]',
-      ],
-      idAttributes: ['data-model-id', 'data-value', 'value'],
+      openPickerSelectors: ['button[aria-label^="Model:"]', 'button[aria-label^="Model"]'],
+      // Grok's model entries are menu checkboxes ("Fast", "Build", "Auto",
+      // "Expert", "Heavy") without a stable id attribute -> they are reported
+      // as display-name-only, never as executable ids.
+      optionSelectors: ['[role="menuitemcheckbox"]', '[role="menuitemradio"]'],
+      idAttributes: ['data-model-id', 'data-value'],
       labelExtraction: 'text',
       loginWallSelectors: ['form[action*="signin" i]', 'input[type="password"]'],
-    },
-    network: {
-      urlPatterns: ['/rest/app-chat/', '/api/'],
-      idKeys: ['modelName', 'model_name', 'id', 'slug'],
-      idPattern: '^(grok|xai)',
-      minModels: 1,
-      replayPaths: [],
     },
   },
 
@@ -323,46 +308,45 @@ export const DISCOVERY_ADAPTERS: Record<WebProviderId, WebModelDiscoveryAdapter>
   'deepseek-web': {
     providerId: 'deepseek-web',
     entryUrl: 'https://chat.deepseek.com/',
-    strategies: ['dom', 'network'],
-    verified: false,
-    blocker:
-      'The site redirects to a Google sign-in page before the chat UI renders, so the model list can only be read with a signed-in DeepSeek account.',
+    strategies: ['network', 'dom'],
+    verified: true,
+    network: {
+      // The provider's OWN settings request that carries the model configs.
+      urlPatterns: ['/api/v0/client/settings'],
+      idKeys: ['model_type'],
+      idPattern: '^(default|expert|vision|reasoning)$',
+      minModels: 1,
+      replayPaths: [],
+    },
     dom: {
-      openPickerSelectors: ['#model-switcher', 'button[aria-haspopup="menu"]', '[class*="model" i]'],
-      optionSelectors: ['[role="option"]', '[role="menuitem"]', 'li'],
+      openPickerSelectors: ['[class*="model" i]', 'button[aria-haspopup="menu"]'],
+      optionSelectors: ['[role="menuitemradio"]', '[role="menuitem"]', 'li'],
       idAttributes: ['data-model-id', 'value', 'data-value'],
       labelExtraction: 'text',
       loginWallSelectors: ['form[action*="login" i]', 'input[type="password"]'],
-    },
-    network: {
-      urlPatterns: ['/api/v0', '/api/models'],
-      idKeys: ['model', 'model_id', 'id'],
-      idPattern: '^(deepseek)',
-      minModels: 1,
-      replayPaths: [],
     },
   },
 
   'mistral-web': {
     providerId: 'mistral-web',
     entryUrl: 'https://chat.mistral.ai/',
-    strategies: ['dom', 'network'],
-    verified: false,
-    blocker:
-      'The chat UI loads, but the only menu it exposes is the reasoning toggle (Fast / Think) — the model list itself is behind a sign-in. A signed-in Mistral account is required.',
+    strategies: ['embedded', 'dom'],
+    verified: true,
+    embedded: {
+      // The provider embeds its own model catalog in the page payload
+      // (vcw_model_catalog.models[] -> { model, label }).
+      marker: 'vcw_model_catalog',
+      idKey: 'model',
+      labelKey: 'label',
+      idPattern: '^(mistral|devstral|codestral|pixtral|ministral|magistral|voxtral|zai|glm)',
+      minModels: 1,
+    },
     dom: {
-      openPickerSelectors: ['button[aria-haspopup="menu"]', '[class*="model" i]', 'select'],
-      optionSelectors: ['[role="option"]', '[role="menuitemradio"]', 'option'],
-      idAttributes: ['value', 'data-model-id', 'data-value'],
+      openPickerSelectors: ['button[aria-label="Choose model"]'],
+      optionSelectors: ['[role="menuitemradio"]', '[role="option"]'],
+      idAttributes: ['data-model-id', 'value', 'data-value'],
       labelExtraction: 'text',
       loginWallSelectors: ['form[action*="signin" i]', 'input[type="password"]'],
-    },
-    network: {
-      urlPatterns: ['/api/models', '/v1/models', '/api/v1/agents'],
-      idKeys: ['id', 'name', 'model'],
-      idPattern: '^(mistral|magistral|devstral|codestral|pixtral|ministral)',
-      minModels: 1,
-      replayPaths: [],
     },
   },
 
@@ -372,7 +356,7 @@ export const DISCOVERY_ADAPTERS: Record<WebProviderId, WebModelDiscoveryAdapter>
     strategies: ['dom', 'network'],
     verified: false,
     blocker:
-      'The configured base URL (https://longcat.ai/chat/) redirects to the public landing page instead of the chat app, and the landing page exposes no model picker. The real chat entry URL still has to be identified.',
+      'The provider requires a mainland-China phone number to sign up, so no session could be created. The account cannot be verified from this machine until such a number is provided — the interface is used without an account for now.',
     dom: {
       openPickerSelectors: ['button[aria-haspopup="menu"]', '[class*="model" i]', '[class*="Model" i]'],
       optionSelectors: ['[role="option"]', '[role="menuitemradio"]', 'li'],

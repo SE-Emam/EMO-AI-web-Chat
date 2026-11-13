@@ -122,6 +122,11 @@ export class FakePage implements DiscoveryPage {
     for (const s of selectors) this.hidden.add(s);
   }
 
+  /** True when the selector was hidden (e.g. a dismissed overlay). */
+  isHidden(selector: string): boolean {
+    return this.hidden.has(selector);
+  }
+
   private matches(selector: string): ElementFixture[] {
     if (this.hidden.has(selector)) return [];
     return this.elements.filter(
