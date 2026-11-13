@@ -364,7 +364,34 @@ POST /api/gateway/discovery/notifications/:id/read  → { ok: true, unreadCount:
 
 ---
 
-## 14. اختبارات TDD
+## 14. الفحص التلقائي عند تشغيل التطبيق
+
+بدل انتظار مؤقّت 12 ساعة، **المسح التلقائي يبدأ مع تشغيل التطبيق**:
+
+```
+model discovery: startup connection check started (15 providers)
+model discovery: startup model sweep started (15 providers)
+```
+
+| الإعداد | الافتراضي | المعنى |
+|---|---|---|
+| `ui.discovery.runOnStartup` | `true` | مسح نماذج كل المزودات عند الإقلاع |
+| `ui.discovery.checkConnectionsOnStartup` | `true` | فحص اتصال كل المزودات عند الإقلاع |
+| `ui.discovery.startupDelayMs` | `4000` | تأخير بسيط ليربط الواجهة أولًا |
+| `ui.discovery.intervalMs` | 12h | الدورية بعد ذلك |
+
+المسح مهمة **خلفية**: البوابة جاهزة فورًا، والواجهة تُظهر شريط التقدّم تلقائيًا
+(，无需 نقرة — تستطلع `/api/gateway/discovery/job` عند فتح الصفحة).
+
+### خطأٌ ثانٍ اكتُشف أثناء ذلك
+
+`mergeConfig` في `config-store.ts` كان **يعيد بناء** كائن `ui` عند التحميل بدون
+`discovery` — أي أن **كل إعدادات الفحص كانت تضيع عند كل إعادة تشغيل** (وتعود
+للقيم الافتراضي دون أن يعلم أحد). الآن يُعاد استخدام الكائن المُدمَج كما هو.
+
+---
+
+## 15. اختبارات TDD
 
 | الملف | التغطية |
 |---|---|
@@ -376,7 +403,7 @@ POST /api/gateway/discovery/notifications/:id/read  → { ok: true, unreadCount:
 | `tests/gateway/discovery-routes.test.ts` | مسارات HTTP: discover · notifications · read · read-all · status |
 | `tests/gateway/provider-ui.test.ts` | تنفيذ **سكربت الواجهة الحقيقي** داخل `vm`: أزرار الاكتشاف، مركز الإشعارات، منع الضغط المزدوج |
 
-**إجمالي الاختبارات:** 832 ناجح (0 فاشل) — منها 104 جديدة لهذه المهمة.
+**إجمالي الاختبارات:** 834 ناجح (0 فاشل) — منها 106 جديدة لهذه المهمة.
 
 ### عيوب حقيقية كشفتها الاختبارات وأُصلحت
 
@@ -389,7 +416,7 @@ POST /api/gateway/discovery/notifications/:id/read  → { ok: true, unreadCount:
 
 ---
 
-## 15. مزوّد Tencent
+## 16. مزوّد Tencent
 
 كان `tencent-ai-webDriver` **يعيد كتابة** `aistudio.tencent.ai` إلى
 `yuanbao.tencent.com/chat`، أي أن المزوّد كان يشير لمنتج مختلف عن الموقع
@@ -402,7 +429,7 @@ POST /api/gateway/discovery/notifications/:id/read  → { ok: true, unreadCount:
 
 ---
 
-## 16. حدود التنفيذ
+## 17. حدود التنفيذ
 
 * **بُني وأُعيد تشغيله** بعد موافقة المالك صراحةً (13-11 12:56) — لم يُنشر خارج الجهاز.
 * **Gateway 8989 لم يُمس** — PID 86948 يعمل بنفس binaries.
@@ -414,7 +441,7 @@ POST /api/gateway/discovery/notifications/:id/read  → { ok: true, unreadCount:
 
 ---
 
-## 17. حالة النظام
+## 18. حالة النظام
 
 | البند | الحالة |
 |---|---|

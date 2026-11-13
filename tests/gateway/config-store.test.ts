@@ -8,6 +8,25 @@ describe('gateway config store', () => {
   let dir: string;
   let file: string;
 
+  it('ships the startup-scan defaults (the scan runs when the app starts)', async () => {
+    const cfg = defaultGatewayConfig();
+    expect(cfg.ui.discovery?.runOnStartup).toBe(true);
+    expect(cfg.ui.discovery?.checkConnectionsOnStartup).toBe(true);
+    expect(cfg.ui.discovery?.enabled).toBe(true);
+    expect(cfg.ui.discovery?.intervalMs).toBe(12 * 60 * 60 * 1000);
+    expect(typeof cfg.ui.discovery?.startupDelayMs).toBe('number');
+  });
+
+  it('keeps the startup-scan settings when a config is saved and loaded', async () => {
+    const store2 = new GatewayConfigStore(file);
+    const cfg = defaultGatewayConfig();
+    cfg.ui.discovery = { ...(cfg.ui.discovery as any), runOnStartup: false, checkConnectionsOnStartup: false };
+    await store2.save(cfg);
+    const loaded = await new GatewayConfigStore(file).load();
+    expect(loaded.ui.discovery?.runOnStartup).toBe(false);
+    expect(loaded.ui.discovery?.checkConnectionsOnStartup).toBe(false);
+  });
+
   beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gwcfg-'));
     file = path.join(dir, 'gateway.json');

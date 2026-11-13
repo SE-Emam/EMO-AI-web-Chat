@@ -7327,6 +7327,22 @@ async function pollBulkJob(){
   }
 }
 
+/**
+ * Picks up a job that is ALREADY running (e.g. the automatic sweep that
+ * starts with the app) so the progress is visible without clicking anything.
+ */
+async function checkBulkJob(){
+  try{
+    const res = await api('/api/gateway/discovery/job');
+    const job = res.job || null;
+    if(!job) return;
+    renderBulkJob(job);
+    if(job.running) pollBulkJob();
+  }catch(e){
+    /* the job endpoint is optional */
+  }
+}
+
 function renderBulkJob(job){
   const strip = document.getElementById('providersJobStrip');
   if(!strip) return;
@@ -7586,6 +7602,9 @@ function navigate(viewName, itemEl){
   if(viewName === 'keys'){
     loadApiKeys();
     loadCustomProviders();
+  }
+  if(viewName === 'providers'){
+    void checkBulkJob();
   }
   if(viewName === 'router'){
     navigate('swarm', document.querySelector('.nav-item[data-nav="swarm"]'));
@@ -11050,6 +11069,8 @@ if(hubUptimeSecEl){
 loadDetectedAgents();
 refreshData();
 setInterval(refreshData, 3000);
+// The automatic sweep may already be running (it starts with the app).
+void checkBulkJob();
 
 // Live push channel: the gateway emits a 'usage' event the instant a request
 // starts or ends (SSE). We refresh immediately on it, so the topology reflects

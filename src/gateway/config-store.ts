@@ -157,7 +157,19 @@ export function defaultGatewayConfig(): GatewayConfigFile {
       customProviders: [],
       customAgents: [],
     },
-    ui: { heartbeatTimeoutMs: 15000 },
+    ui: {
+      heartbeatTimeoutMs: 15000,
+      discovery: {
+        enabled: true,
+        intervalMs: 12 * 60 * 60 * 1000,
+        concurrency: 1,
+        timeoutMs: 120_000,
+        // The automatic scan runs WHEN THE USER STARTS THE APP.
+        runOnStartup: true,
+        checkConnectionsOnStartup: true,
+        startupDelayMs: 4000,
+      },
+    },
     providers,
     routerGroups: [],
   };
@@ -246,6 +258,18 @@ function mergeConfig(defaults: GatewayConfigFile, raw: unknown): GatewayConfigFi
         typeof (rawUi.discovery as any)?.timeoutMs === 'number'
           ? Math.min(600_000, Math.max(10_000, (rawUi.discovery as any).timeoutMs))
           : defaults.ui.discovery?.timeoutMs ?? 120_000,
+      runOnStartup:
+        typeof (rawUi.discovery as any)?.runOnStartup === 'boolean'
+          ? (rawUi.discovery as any).runOnStartup
+          : defaults.ui.discovery?.runOnStartup ?? true,
+      checkConnectionsOnStartup:
+        typeof (rawUi.discovery as any)?.checkConnectionsOnStartup === 'boolean'
+          ? (rawUi.discovery as any).checkConnectionsOnStartup
+          : defaults.ui.discovery?.checkConnectionsOnStartup ?? true,
+      startupDelayMs:
+        typeof (rawUi.discovery as any)?.startupDelayMs === 'number'
+          ? Math.min(60_000, Math.max(0, (rawUi.discovery as any).startupDelayMs))
+          : defaults.ui.discovery?.startupDelayMs ?? 4000,
     },
   };
   const providers = { ...defaults.providers } as Record<WebProviderId, ProviderConfig>;
@@ -268,9 +292,7 @@ function mergeConfig(defaults: GatewayConfigFile, raw: unknown): GatewayConfigFi
       customProviders: Array.isArray(gateway.customProviders) ? gateway.customProviders : defaults.gateway.customProviders,
       customAgents: Array.isArray(gateway.customAgents) ? gateway.customAgents : (defaults.gateway.customAgents || []),
     },
-    ui: {
-      heartbeatTimeoutMs: typeof ui.heartbeatTimeoutMs === 'number' ? ui.heartbeatTimeoutMs : defaults.ui.heartbeatTimeoutMs,
-    },
+    ui,
     providers,
     routerGroups,
   };

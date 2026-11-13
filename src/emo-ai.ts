@@ -56,6 +56,9 @@ async function main() {
     intervalMs: 12 * 60 * 60 * 1000,
     concurrency: 1,
     timeoutMs: 120_000,
+    runOnStartup: true,
+    checkConnectionsOnStartup: true,
+    startupDelayMs: 4000,
   };
   const discoveryService = new ModelDiscoveryService({
     runner: new PlaywrightDiscoveryRunner(),
@@ -90,6 +93,26 @@ async function main() {
 
   const app = createServer({ mode: 'gateway', manager, tracker, gatewayConfig: config });
   await app.listen({ port: config.gateway.port, host: config.gateway.host });
+
+  // ---- The automatic scan runs WHEN THE USER STARTS THE APP -------------
+  // It is a BACKGROUND job: the gateway is usable immediately and the UI
+  // shows the progress (the job strip). The periodic scheduler keeps
+  // refreshing afterwards.
+  if (discoverySettings.enabled && discoverySettings.runOnStartup) {
+    const delay = Math.max(0, discoverySettings.startupDelayMs ?? 4000);
+    setTimeout(() => {
+      try {
+        if (discoverySettings.checkConnectionsOnStartup) {
+          manager.startConnectionSweep();
+          console.log(`model discovery: startup connection check started (${WEB_PROVIDER_IDS.length} providers)`);
+        }
+        manager.startDiscoverySweep();
+        console.log(`model discovery: startup model sweep started (${WEB_PROVIDER_IDS.length} providers)`);
+      } catch (e) {
+        console.log(`model discovery: startup sweep could not start: ${(e as Error).message}`);
+      }
+    }, delay).unref?.();
+  }
   const uiUrl = `http://${config.gateway.host}:${config.gateway.port}/`;
   console.log('EMO-AI gateway ready');
   console.log(`base uri: ${config.gateway.baseUriDisplay}`);

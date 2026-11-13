@@ -177,6 +177,16 @@ export interface DiscoverySettings {
   concurrency: number;
   /** Per-provider scan timeout. */
   timeoutMs: number;
+  /**
+   * Run a discovery sweep when the application starts (default true).
+   * The sweep runs in the BACKGROUND — the gateway is usable immediately and
+   * the UI shows the progress.
+   */
+  runOnStartup: boolean;
+  /** Check the connection of every provider on startup (default true). */
+  checkConnectionsOnStartup: boolean;
+  /** Delay before the startup sweep so the UI can attach and show it. */
+  startupDelayMs: number;
 }
 
 export type RouterTargetKind = 'web' | 'custom';
