@@ -12,7 +12,11 @@ import { BrowserOwner } from '../browser/browser-owner.js';
 import { TabScheduler } from '../browser/tab-scheduler.js';
 import { TabWorkerPool } from './tab-worker-pool.js';
 import { SessionQueue } from '../sessions/session-queue.js';
+import { SCHEDULED_PER_SESSION_NOTES } from './driver-capabilities.js';
+import { stripNeutralCorrections } from './tool-bridge-markers.js';
 import { formatMessages } from './models.js';
+import { ProfileBusyError } from './profile-busy-error.js';
+import { OwnerIpcManager } from '../ipc/profile-owner-router.js';
 import { parseToolCallsFromResponse } from '../server/tool-interpreter.js';
 
 /**
@@ -341,6 +345,25 @@ export class BaseWebDriver implements ArenaDriver {
     return this.sessionQueues.run(sessionKey, () =>
       this.sendMessageSerialized(model, messages, onChunk, signal, sessionKey)
     );
+  }
+
+  /**
+   * Task 13 — declared capabilities: per-session pages over the scheduler,
+   * durable conversation state restored from the session registry.
+   */
+  getCapabilities(): import('./driver-capabilities.js').DriverCapabilities {
+    return {
+      sessionSupport: 'per-session-page',
+      persistentConversation: true,
+      streaming: true,
+      toolCalling: false,
+      notes: SCHEDULED_PER_SESSION_NOTES,
+    };
+  }
+
+  /** Task 14 — breaker key half: the durable profile this driver runs against. */
+  getProfileDir(): string | undefined {
+    return this.options.config.userDataDir;
   }
 
   protected async sendMessageSerialized(
@@ -682,7 +705,10 @@ export class BaseWebDriver implements ArenaDriver {
           );
         }
       } catch {}
-      st.lastSentMessages = [...trackedMessages.map((m) => ({ ...(m as any) })), assistantForHistory];
+      // P2: a neutral correction issued by EMO itself is NOT client history —
+      // it must not shift the stored prefix, or the next client turn would
+      // no longer match it (breaking the conversation continuation).
+      st.lastSentMessages = [...stripNeutralCorrections(trackedMessages).map((m) => ({ ...(m as any) })), assistantForHistory];
       // Durable: the web chat + transcript survive gateway restarts, so the
       // same agent task keeps the same web session across restarts.
       if (this.options.config.privacyMode !== true) {
@@ -1109,6 +1135,7 @@ export class BaseWebDriver implements ArenaDriver {
     this.page = null;
     if (this.claimedProfile) {
       const profileDir = this.options.config.userDataDir || 'profile';
+      await OwnerIpcManager.stopForProfile(profileDir).catch(() => {});
       await this.ownershipLedger.releaseProfile(profileDir, this.browserOwner.id).catch(() => {});
       this.claimedProfile = false;
     }
@@ -1159,14 +1186,38 @@ export class BaseWebDriver implements ArenaDriver {
     const claim = await this.ownershipLedger.claimProfile(profileDir, this.browserOwner.id, this.browserOwner.epoch);
     if (claim.status === 'busy') {
       try { await ctx.close(); } catch {}
-      throw new Error(
+      // Task 11: structured busy error (same external 503 semantics; the
+      // ProfileOwnerRouter can now FORWARD to the owner instead of failing).
+      throw new ProfileBusyError(
         `503 profile in use by another gateway process: profile "${profileDir}" is owned by ` +
         `owner=${claim.owner.ownerInstanceId} pid=${claim.owner.pid} heartbeatAt=${new Date(claim.owner.heartbeatAt).toISOString()}. ` +
-        `Retry later or stop the other gateway process.`
+        `Retry later or stop the other gateway process.`,
+        {
+          profileDir,
+          ownerInstanceId: claim.owner.ownerInstanceId,
+          pid: claim.owner.pid,
+          epoch: claim.owner.epoch,
+          heartbeatAt: claim.owner.heartbeatAt,
+          staleHeartbeat: claim.staleHeartbeat,
+        }
       );
     }
     this.claimedProfile = true;
     this.pageEpoch = this.browserOwner.epoch;
+    // Task 11: advertise the loopback IPC channel for this profile (routing
+    // requests from other gateway processes to THIS owner process). Startup
+    // failure degrades to the legacy safe-busy behavior — never fatal.
+    try {
+      await OwnerIpcManager.ensureForProfile({
+        profileDir,
+        ownerInstanceId: this.browserOwner.id,
+        epoch: this.browserOwner.epoch,
+        ledger: this.ownershipLedger,
+        resolve: () => this as unknown as ArenaDriver,
+      });
+    } catch (e: unknown) {
+      console.log(`[${this.options.name}] owner IPC channel unavailable (routing disabled): ${(e as Error).message}`);
+    }
     if (claim.status === 'stolen') {
       console.log(`[${this.options.name}] Profile ownership taken over from dead/stale owner pid=${claim.previousOwner.pid}`);
     }

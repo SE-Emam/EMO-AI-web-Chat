@@ -12,6 +12,42 @@ export interface PersistentBrowserLauncher {
 }
 
 /**
+ * Cleans up stale Chrome Singleton locks in a profile directory if the owning process is no longer running.
+ */
+export function cleanupStaleProfileLocks(userDataDir: string): void {
+  try {
+    if (!userDataDir) return;
+    if (!fs.existsSync(userDataDir)) {
+      fs.mkdirSync(userDataDir, { recursive: true });
+      return;
+    }
+    const lockPath = path.join(userDataDir, 'SingletonLock');
+    if (fs.existsSync(lockPath) || fs.lstatSync(lockPath, { throwIfNoEntry: false })) {
+      try {
+        const target = fs.readlinkSync(lockPath);
+        const match = target.match(/-(\d+)$/);
+        if (match) {
+          const pid = parseInt(match[1], 10);
+          try {
+            process.kill(pid, 0); // Check if process is alive
+          } catch {
+            // Process is dead, remove stale locks
+            fs.rmSync(lockPath, { force: true });
+            fs.rmSync(path.join(userDataDir, 'SingletonCookie'), { force: true });
+            fs.rmSync(path.join(userDataDir, 'SingletonSocket'), { force: true });
+          }
+        }
+      } catch {
+        // If readlink fails or stat fails, remove dangling link safely
+        fs.rmSync(lockPath, { force: true });
+      }
+    }
+  } catch {
+    // Ignore any filesystem inspection error
+  }
+}
+
+/**
  * Manages the persistent Chrome browser profile and browser contexts for Arena WebBridge.
  */
 export class BrowserManager {
@@ -45,31 +81,7 @@ export class BrowserManager {
    * Cleans up stale Chrome Singleton locks if the owning process is no longer running.
    */
   private cleanupStaleLocks(): void {
-    try {
-      const lockPath = path.join(this.config.userDataDir, 'SingletonLock');
-      if (fs.existsSync(lockPath) || fs.lstatSync(lockPath, { throwIfNoEntry: false })) {
-        try {
-          const target = fs.readlinkSync(lockPath);
-          const match = target.match(/-(\d+)$/);
-          if (match) {
-            const pid = parseInt(match[1], 10);
-            try {
-              process.kill(pid, 0); // Check if process is alive
-            } catch {
-              // Process is dead, remove stale locks
-              fs.rmSync(lockPath, { force: true });
-              fs.rmSync(path.join(this.config.userDataDir, 'SingletonCookie'), { force: true });
-              fs.rmSync(path.join(this.config.userDataDir, 'SingletonSocket'), { force: true });
-            }
-          }
-        } catch {
-          // If readlink fails or stat fails, remove dangling link safely
-          fs.rmSync(lockPath, { force: true });
-        }
-      }
-    } catch {
-      // Ignore any filesystem inspection error
-    }
+    cleanupStaleProfileLocks(this.config.userDataDir);
   }
 
   /**

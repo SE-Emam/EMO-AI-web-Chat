@@ -1,9 +1,34 @@
+# Dependencies
 node_modules/
+
+# Production Build
 dist/
+build/
+
+# Runtime and Local Gateway Configs
 .env
-*.log
+.env.local
 .arena-webbridge/
 gateway.json
+usage.json
+*.log
+.arena-gateway.log
+
+# Temporary and Scratch Files
 *.tmp
-*.png
-/tmp/*.json
+*.bak
+*.png.bak
+/tmp/
+scratch/
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# IDE and Editor Directories
+.idea/
+.vscode/
+.superpowers/
+
+# Test Coverage
+coverage/

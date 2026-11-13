@@ -67,6 +67,7 @@ export const ARENA_SELECTORS = {
     'button:has-text("Reset")',
   ],
   botMessage: [
+    '[data-dil-response]',
     '[data-message-author-role="assistant"]',
     'ol > div:not(.justify-end) .prose',
     '.prose:not(.bg-surface-raised *)',

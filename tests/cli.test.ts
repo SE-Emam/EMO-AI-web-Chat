@@ -160,7 +160,7 @@ describe('CLI - Command parsing and execution', () => {
       expect.objectContaining({ port: 9090, host: '0.0.0.0' })
     );
     expect(mockListen).toHaveBeenCalledWith({ port: 9090, host: '0.0.0.0' });
-    expect(logs.some((msg) => msg.includes('Arena WebBridge listening at http://0.0.0.0:9090/v1'))).toBe(true);
+    expect(logs.some((msg) => msg.includes('EMO-AI-web listening at http://0.0.0.0:9090/v1'))).toBe(true);
   });
 
   it('should default to serve command when no subcommand is provided', async () => {
@@ -183,7 +183,7 @@ describe('CLI - Command parsing and execution', () => {
     await program.parseAsync(['node', 'webbridge', '--port', '8989']);
 
     expect(mockListen).toHaveBeenCalledWith({ port: 8989, host: '127.0.0.1' });
-    expect(logs.some((msg) => msg.includes('Arena WebBridge listening at http://127.0.0.1:8989/v1'))).toBe(true);
+    expect(logs.some((msg) => msg.includes('EMO-AI-web listening at http://127.0.0.1:8989/v1'))).toBe(true);
   });
 
   it('should list models in tabular format by default', async () => {

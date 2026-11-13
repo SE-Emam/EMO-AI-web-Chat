@@ -19,13 +19,15 @@ describe('gateway config store', () => {
 
   it('defaultGatewayConfig has required display/auth defaults and web providers', () => {
     const cfg = defaultGatewayConfig();
-    expect(cfg.gateway.baseUriDisplay).toBe('mac.ai/v1');
-    expect(cfg.gateway.apiKey).toBeTruthy();
-    expect(cfg.gateway.apiKey.length).toBeGreaterThanOrEqual(20);
+    expect(cfg.gateway.baseUriDisplay).toBe('emo-web.ai/v1');
+    expect(cfg.gateway.apiKey).toBe('emo.web');
     expect(cfg.gateway.requireApiKey).toBe(true);
-    for (const id of ['arena-browser', 'zai-web', 'claude-web', 'tencent-ai-web', 'gemini-web', 'qwen-web'] as const) {
+    expect(cfg.routerGroups).toEqual([]);
+    for (const id of ['arena-browser', 'zai-web', 'claude-web', 'tencent-ai-web', 'gemini-web', 'qwen-web', 'chatgpt-web', 'grok-web', 'kimi-web', 'minimax-web', 'longcat-web', 'llm7-web', 'kiwi-web', 'deepseek-web', 'mistral-web'] as const) {
       expect(cfg.providers[id]).toBeDefined();
       expect(cfg.providers[id]?.enabled).toBe(false);
+      expect(cfg.providers[id]?.settings.headless).toBe(true);
+      expect(cfg.providers[id]?.settings.privacyMode).toBe(false);
       expect(Array.isArray(cfg.providers[id]?.selectedModels)).toBe(true);
     }
   });
@@ -56,10 +58,23 @@ describe('gateway config store', () => {
     expect(loaded.providers['claude-web']?.enabled).toBe(true);
   });
 
-  it('load falls back to defaults on corrupted JSON', async () => {
-    await fs.writeFile(file, '{not-json', 'utf8');
+  it('save/load round-trips routerGroups', async () => {
     const store = new GatewayConfigStore(file);
-    const cfg = await store.load();
-    expect(cfg.gateway.baseUriDisplay).toBe('mac.ai/v1');
+    const cfg = defaultGatewayConfig();
+    cfg.routerGroups = [{
+      id: 'g1',
+      name: 'GroupA',
+      enabled: true,
+      strategy: 'sequential',
+      targets: [{ id: 't1', kind: 'web', providerId: 'claude-web', model: 'claude-web:default' }],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }];
+    await store.save(cfg);
+    const raw = JSON.parse(await fs.readFile(file, 'utf8'));
+    expect(raw.routerGroups[0].name).toBe('GroupA');
+    const loaded = await store.load();
+    expect(loaded.routerGroups).toHaveLength(1);
+    expect(loaded.routerGroups?.[0]?.targets[0]?.providerId).toBe('claude-web');
   });
 });

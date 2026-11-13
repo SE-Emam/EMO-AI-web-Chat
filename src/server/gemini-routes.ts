@@ -3,17 +3,31 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { isValidApiKey } from '../gateway/security.js';
 import type { ArenaDriver, ChatMessage } from '../types.js';
 import type { UsageTracker } from '../gateway/usage-tracker.js';
+import type { RequestBroker } from '../protocol/request-broker.js';
 import { detectClientAgent } from './app.js';
 import { chatSessionKey } from './chat-session-key.js';
 import {
+  payloadFingerprint,
+  beginBrokeredRequest,
+  completeBrokered,
+  failBrokered,
+  markSentBrokered,
+  type BrokeredClaim,
+} from './request-broker-helpers.js';
+import {
   convertGeminiContents,
+  convertGeminiContentsWithTools,
+  normalizeGeminiToolConfig,
   formatGeminiResponse,
+  formatGeminiFunctionCallResponse,
+  formatGeminiSSE,
   formatGeminiDeltaChunk,
   formatGeminiFinalChunk,
   formatGeminiError,
   formatGeminiModelList,
   type GeminiGenerateContentRequest,
 } from './gemini-adapter.js';
+import { injectToolsInstruction, parseToolCallsFromResponse, resolveToolChoice, decideToolOutcome, hydrateToolResultNames } from './tool-interpreter.js';
 
 export interface GeminiRoutesOptions {
   getDriver: () => ArenaDriver;
@@ -22,6 +36,13 @@ export interface GeminiRoutesOptions {
   apiKey?: string;
   getValidApiKeys?: () => string[];
   getScopedGroup?: (key: string) => { name: string } | undefined;
+  /**
+   * Task 12 — the ONE shared RequestBroker instance (same store + ProcessLock
+   * as the OpenAI/Anthropic paths). When present, opt-in idempotency via
+   * X-Request-Id applies to /v1beta generateContent routes; absent →
+   * behavior unchanged (no forced idempotency).
+   */
+  broker?: RequestBroker;
 }
 
 export function extractGeminiApiKey(req: FastifyRequest): string | undefined {
@@ -89,6 +110,94 @@ function promptChars(messages: ChatMessage[]): number {
   let n = 0;
   for (const m of messages) n += String(m.content || '').length;
   return n;
+}
+
+/**
+ * Task 12 — serves a stored broker result as a NATIVE Gemini response.
+ * The stored `nativeReplay` (the exact object the first execution returned)
+ * is replayed as-is for JSON; for SSE the native chunk sequence is rebuilt
+ * from the stored text with the SAME formatters (candidates/content/parts
+ * delta + final chunk with finishReason). Chunking of a replay is a single
+ * delta (timing/slicing of the original stream is not preserved —
+ * documented). An OpenAI/Anthropic body can never be returned here: the
+ * payload comes from this protocol's own complete() only.
+ */
+function serveGeminiReplay(
+  result: unknown,
+  reply: FastifyReply,
+  opts: { stream?: boolean },
+  fallbackModel: string,
+  pChars: number,
+  tracker?: UsageTracker
+): void {
+  const stored = (result ?? {}) as {
+    id?: string;
+    model?: string;
+    content?: string;
+    nativeReplay?: {
+      candidates?: Array<{
+        content?: { parts?: Array<Record<string, unknown>> };
+      }>;
+    };
+  };
+  const rmodel = stored.model || fallbackModel;
+  const text =
+    (opts.stream ? (stored.nativeReplay as { text?: string })?.text : undefined) ??
+    stored.nativeReplay?.candidates?.[0]?.content?.parts?.[0]?.text ??
+    stored.content ??
+    '';
+  const inTokens = Math.max(1, Math.ceil(pChars / 4));
+  const outTokens = Math.max(1, Math.ceil(String(text).length / 4));
+  tracker?.recordRequestEnd({
+    id: stored.id || '',
+    ok: true,
+    completionChars: String(text).length,
+  });
+
+  if (opts.stream) {
+    const streamText = String((stored.nativeReplay as { text?: string })?.text ?? stored.content ?? '');
+    reply.hijack();
+    reply.raw.setHeader('Content-Type', 'text/event-stream');
+    reply.raw.setHeader('Cache-Control', 'no-cache');
+    reply.raw.setHeader('Connection', 'keep-alive');
+    reply.raw.setHeader('Access-Control-Allow-Origin', '*');
+    reply.raw.setHeader('Access-Control-Allow-Headers', '*');
+    reply.raw.setHeader('x-emo-replay', 'true');
+    reply.raw.writeHead(200);
+    // Replay of a STORED outcome — a single rebuilt delta, not a live run.
+    reply.raw.write(formatGeminiDeltaChunk(streamText, rmodel));
+    reply.raw.write(
+      formatGeminiFinalChunk(
+        rmodel,
+        {
+          promptTokenCount: inTokens,
+          candidatesTokenCount: outTokens,
+          totalTokenCount: inTokens + outTokens,
+        },
+        'STOP'
+      )
+    );
+    reply.raw.end();
+    return;
+  }
+
+  let native = stored.nativeReplay;
+  if (!native || typeof native !== 'object' || !Array.isArray(native.candidates)) {
+    // Legacy/plain entries (no nativeReplay): rebuild from the stored text
+    // with the native formatter — documented fallback, still Gemini-format.
+    native = formatGeminiResponse(
+      String(stored.content ?? ''),
+      rmodel,
+      {
+        promptTokenCount: inTokens,
+        candidatesTokenCount: outTokens,
+        totalTokenCount: inTokens + outTokens,
+      },
+      'STOP'
+    );
+  }
+  reply.header('x-emo-replay', 'true');
+  reply.send(native);
 }
 
 interface ParsedModelAction {
@@ -279,7 +388,32 @@ export function registerGeminiRoutes(
       model = scopedGroup.name;
     }
 
-    const chatMessages = convertGeminiContents(body.contents, body.systemInstruction);
+    const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
+    const internalToolChoice = normalizeGeminiToolConfig((body as any).tool_config);
+    const toolRes = hasTools ? resolveToolChoice(internalToolChoice, body.tools!.length) : { shouldInjectTools: false, shouldParseTools: false, requireToolCall: false } as const;
+    // Convert messages — use tool-aware conversion when tools are present
+    // to preserve functionCall/functionResponse parts as proper ChatMessage fields.
+    let chatMessages = hasTools
+      ? convertGeminiContentsWithTools(body.contents, body.systemInstruction)
+      : convertGeminiContents(body.contents, body.systemInstruction);
+    if (toolRes.shouldInjectTools) {
+      // Convert Gemini functionDeclarations to OpenAI format for injection
+      const openaiTools: unknown[] = [];
+      for (const t of body.tools as any[]) {
+        for (const fd of t?.functionDeclarations || []) {
+          openaiTools.push({
+            type: 'function' as const,
+            function: {
+              name: fd.name,
+              description: fd.description || '',
+              parameters: fd.parameters || {},
+            },
+          });
+        }
+      }
+      chatMessages = hydrateToolResultNames(chatMessages);
+      chatMessages = injectToolsInstruction(chatMessages, openaiTools, internalToolChoice);
+    }
     const pChars = promptChars(chatMessages);
 
     if (target.action === 'countTokens') {
@@ -311,6 +445,69 @@ export function registerGeminiRoutes(
     });
     let completionChars = 0;
 
+    // ---- Task 12: unified claim-once broker (opt-in via X-Request-Id) ----
+    // Same lifecycle as the Anthropic/OpenAI paths over the SAME broker
+    // instance. The fingerprint covers the EFFECTIVE body (post model
+    // coercion). countTokens/GET routes are not executions → never claimed.
+    const requestIdHeader = String(req.headers['x-request-id'] || '').trim();
+    const apiKeyScope = providedKey || 'anon';
+    let brokeredClaim: BrokeredClaim | null = null;
+    if (opts.broker && requestIdHeader) {
+      const claim = await beginBrokeredRequest({
+        protocol: 'gemini',
+        apiKeyScope,
+        providerId: model,
+        requestId: requestIdHeader,
+        fingerprint: payloadFingerprint(body, 'gemini'),
+        broker: opts.broker,
+        sessionKey: chatSessionKey(req, body, chatMessages),
+      });
+      if (claim.kind === 'conflict') {
+        return reply.status(409).send({
+          error: {
+            code: 409,
+            message: `idempotency_key_reused_with_different_request: request id "${requestIdHeader}" was already used with a different payload; refusing to replay a non-matching result.`,
+            status: 'ABORTED',
+          },
+        });
+      }
+      if (claim.kind === 'denied') {
+        const message =
+          claim.state === 'running'
+            ? `Request ${requestIdHeader} is already in progress (claim-once). Poll or wait for the original request to finish.`
+            : claim.state === 'unconfirmed'
+              ? `Request ${requestIdHeader} ended UNCONFIRMED: the message may have already been sent to the web chat (${claim.reason || 'unknown reason'}). Verify on the web side before re-issuing; do NOT blindly retry.`
+              : claim.state === 'completed'
+                ? `Request ${requestIdHeader} completed earlier but its result was too large to replay.`
+                : `Request ${requestIdHeader} is ${claim.state}.`;
+        return reply.status(409).send({
+          error: {
+            code: 409,
+            message,
+            status: 'ALREADY_EXISTS',
+            state: claim.state,
+            ...(claim.reason ? { reason: claim.reason } : {}),
+          },
+        });
+      }
+      if (claim.kind === 'replay') {
+        serveGeminiReplay(claim.result, reply, { stream: isStream }, model, pChars, opts.tracker);
+        return;
+      }
+      if (claim.kind === 'execute') brokeredClaim = claim;
+      // kind 'none' → no X-Request-Id → proceed exactly as before.
+    }
+    const brokerFail = (message: string) => {
+      if (brokeredClaim?.kind === 'execute') {
+        void failBrokered(brokeredClaim, { retryable: true, error: message }).catch(() => {});
+      }
+    };
+    const brokerComplete = (result: unknown) => {
+      if (brokeredClaim?.kind === 'execute') {
+        void completeBrokered(brokeredClaim, result).catch(() => {});
+      }
+    };
+
     try {
       const driver = opts.getDriver();
       if (!driver) {
@@ -333,59 +530,161 @@ export function registerGeminiRoutes(
         };
 
         try {
+          // The send is INITIATED here: any later failure is unconfirmed.
+          if (brokeredClaim?.kind === 'execute') markSentBrokered(brokeredClaim);
+          let streamFull = '';
           const sendFn = driver.sendMessage.bind(driver) as any;
           let streamResult: string | undefined;
 
-          if (sendFn.length === 1) {
-            streamResult = await sendFn({
-              model,
-              messages: chatMessages,
-              stream: true,
-              onChunk: (chunk: string) => {
-                completionChars += chunk.length;
-                ensureHeaders();
-                reply.raw.write(formatGeminiDeltaChunk(chunk, model));
-              },
-              signal: abortController.signal,
-            });
+          if (toolRes.shouldParseTools) {
+            // Buffer when tools are present so functionCall parts can be
+            // detected and emitted as native Gemini parts.
+            if (sendFn.length === 1) {
+              streamResult = await sendFn({
+                model,
+                messages: chatMessages,
+                stream: true,
+                onChunk: (chunk: string) => { streamFull += chunk; },
+                signal: abortController.signal,
+              });
+            } else {
+              streamResult = await driver.sendMessage(
+                model,
+                chatMessages,
+                (chunk: string) => { streamFull += chunk; },
+                abortController.signal,
+                chatSessionKey(req, body, chatMessages)
+              );
+            }
+            if (completionChars === 0 && streamResult && streamResult.length > 0) {
+              completionChars = streamResult.length;
+              streamFull += streamResult;
+            } else {
+              completionChars = String(streamFull || '').length;
+            }
+            ensureHeaders();
+            const toolResult = parseToolCallsFromResponse(String(streamFull || ''));
+            const decision = decideToolOutcome(toolResult, toolRes);
+            const inTokens = Math.max(1, Math.ceil(pChars / 4));
+            const outTokens = Math.max(1, Math.ceil(completionChars / 4));
+            const usage = {
+              promptTokenCount: inTokens,
+              candidatesTokenCount: outTokens,
+              totalTokenCount: inTokens + outTokens,
+            };
+            if (decision.emitToolCalls && decision.toolCalls) {
+              const native = formatGeminiFunctionCallResponse(
+                decision.cleanText || undefined,
+                decision.toolCalls as any,
+                model,
+                usage
+              );
+              reply.raw.write(formatGeminiSSE({ ...native, candidates: [{ ...native.candidates[0], finishReason: undefined, index: 0 }] }));
+              reply.raw.write(
+                formatGeminiFinalChunk(model, usage, 'STOP')
+              );
+              reply.raw.end();
+              opts.tracker?.recordRequestEnd({ id, ok: true, completionChars });
+              brokerComplete({
+                id,
+                model,
+                content: streamFull,
+                cleanText: decision.cleanText,
+                toolCalls: decision.toolCalls,
+                nativeReplay: formatGeminiFunctionCallResponse(
+                  decision.cleanText || undefined,
+                  decision.toolCalls as any,
+                  model,
+                  usage
+                ),
+              });
+            } else if (decision.protocolError) {
+              reply.raw.write(
+                formatGeminiError(
+                  'Model did not produce a required tool call. tool_choice was "required".',
+                  400,
+                  'INVALID_ARGUMENT'
+                )
+              );
+              reply.raw.end();
+              brokerFail(decision.protocolError);
+            } else {
+              if (streamFull) reply.raw.write(formatGeminiDeltaChunk(streamFull, model));
+              reply.raw.write(formatGeminiFinalChunk(model, usage, 'STOP'));
+              reply.raw.end();
+              opts.tracker?.recordRequestEnd({ id, ok: true, completionChars });
+              brokerComplete({
+                id,
+                model,
+                content: streamFull,
+                nativeReplay: { id, model, text: streamFull },
+              });
+            }
           } else {
-            streamResult = await driver.sendMessage(
-              model,
-              chatMessages,
-              (chunk: string) => {
-                completionChars += chunk.length;
-                ensureHeaders();
-                reply.raw.write(formatGeminiDeltaChunk(chunk, model));
-              },
-              abortController.signal,
-              chatSessionKey(req, body, chatMessages)
+            if (sendFn.length === 1) {
+              streamResult = await sendFn({
+                model,
+                messages: chatMessages,
+                stream: true,
+                onChunk: (chunk: string) => {
+                  streamFull += chunk;
+                  completionChars += chunk.length;
+                  ensureHeaders();
+                  reply.raw.write(formatGeminiDeltaChunk(chunk, model));
+                },
+                signal: abortController.signal,
+              });
+            } else {
+              streamResult = await driver.sendMessage(
+                model,
+                chatMessages,
+                (chunk: string) => {
+                  streamFull += chunk;
+                  completionChars += chunk.length;
+                  ensureHeaders();
+                  reply.raw.write(formatGeminiDeltaChunk(chunk, model));
+                },
+                abortController.signal,
+                chatSessionKey(req, body, chatMessages)
+              );
+            }
+
+            ensureHeaders();
+            if (completionChars === 0 && streamResult && streamResult.length > 0) {
+              completionChars = streamResult.length;
+              streamFull += streamResult;
+              reply.raw.write(formatGeminiDeltaChunk(streamResult, model));
+            }
+
+            const inTokens = Math.max(1, Math.ceil(pChars / 4));
+            const outTokens = Math.max(1, Math.ceil(completionChars / 4));
+
+            reply.raw.write(
+              formatGeminiFinalChunk(
+                model,
+                {
+                  promptTokenCount: inTokens,
+                  candidatesTokenCount: outTokens,
+                  totalTokenCount: inTokens + outTokens,
+                },
+                'STOP'
+              )
             );
-          }
-
-          ensureHeaders();
-          if (completionChars === 0 && streamResult && streamResult.length > 0) {
-            completionChars = streamResult.length;
-            reply.raw.write(formatGeminiDeltaChunk(streamResult, model));
-          }
-
-          const inTokens = Math.max(1, Math.ceil(pChars / 4));
-          const outTokens = Math.max(1, Math.ceil(completionChars / 4));
-
-          reply.raw.write(
-            formatGeminiFinalChunk(
+            reply.raw.end();
+            opts.tracker?.recordRequestEnd({ id, ok: true, completionChars });
+            brokerComplete({
+              id,
               model,
-              {
-                promptTokenCount: inTokens,
-                candidatesTokenCount: outTokens,
-                totalTokenCount: inTokens + outTokens,
-              },
-              'STOP'
-            )
-          );
-          reply.raw.end();
-          opts.tracker?.recordRequestEnd({ id, ok: true, completionChars });
+              content: streamFull,
+              // Native replay payload for this protocol (Task 12 decision):
+              // SSE replays are rebuilt from {id, model, text} via the native
+              // formatters — chunk slicing of the original stream is not kept.
+              nativeReplay: { id, model, text: streamFull },
+            });
+          }
         } catch (err: unknown) {
           const error = err as { statusCode?: number; status?: string; message?: string };
+          brokerFail(error.message || 'Stream processing failed');
           opts.tracker?.recordRequestEnd({ id, ok: false, completionChars, error: error.message });
           if (!headersSent) {
             return reply.status(error.statusCode || 500).send({
@@ -413,6 +712,8 @@ export function registerGeminiRoutes(
       const sendFn = driver.sendMessage.bind(driver) as any;
       let fullResponse: string;
 
+      // The send is INITIATED here: any later failure is unconfirmed.
+      if (brokeredClaim?.kind === 'execute') markSentBrokered(brokeredClaim);
       if (sendFn.length === 1) {
         fullResponse = await sendFn({
           model,
@@ -430,11 +731,71 @@ export function registerGeminiRoutes(
         );
       }
 
+      const inTokens = Math.max(1, Math.ceil(pChars / 4));
+
+      // Tool call detection (native Gemini functionCall bridge)
+      if (toolRes.shouldParseTools) {
+        const toolResult = parseToolCallsFromResponse(String(fullResponse || ''));
+        const decision = decideToolOutcome(toolResult, toolRes);
+        if (decision.emitToolCalls && decision.toolCalls) {
+          completionChars = String(decision.cleanText || fullResponse || '').length;
+          opts.tracker?.recordRequestEnd({ id, ok: true, completionChars });
+          const outTokens = Math.max(1, Math.ceil(completionChars / 4));
+          const usage = {
+            promptTokenCount: inTokens,
+            candidatesTokenCount: outTokens,
+            totalTokenCount: inTokens + outTokens,
+          };
+          const native = formatGeminiFunctionCallResponse(
+            decision.cleanText || undefined,
+            decision.toolCalls as any,
+            model,
+            usage
+          );
+          brokerComplete({
+            id,
+            model,
+            content: fullResponse,
+            cleanText: decision.cleanText,
+            toolCalls: decision.toolCalls,
+            // Native replay payload: the EXACT object this protocol returned.
+            nativeReplay: native,
+          });
+          return reply.status(200).send(native);
+        }
+        if (decision.protocolError) {
+          opts.tracker?.recordRequestEnd({ id, ok: false, completionChars: 0, error: decision.protocolError });
+          brokerFail(decision.protocolError);
+          return reply.status(400).send({
+            error: {
+              code: 400,
+              message: 'Model did not produce a required tool call. tool_choice was "required".',
+              status: 'INVALID_ARGUMENT',
+            },
+          });
+        }
+      }
+
       completionChars = String(fullResponse || '').length;
       opts.tracker?.recordRequestEnd({ id, ok: true, completionChars });
-
-      const inTokens = Math.max(1, Math.ceil(pChars / 4));
       const outTokens = Math.max(1, Math.ceil(completionChars / 4));
+
+      brokerComplete({
+        id,
+        model,
+        content: fullResponse,
+        // Native replay payload: the EXACT object this protocol returned.
+        nativeReplay: formatGeminiResponse(
+          fullResponse,
+          model,
+          {
+            promptTokenCount: inTokens,
+            candidatesTokenCount: outTokens,
+            totalTokenCount: inTokens + outTokens,
+          },
+          'STOP'
+        ),
+      });
 
       return reply.status(200).send(
         formatGeminiResponse(
@@ -450,6 +811,7 @@ export function registerGeminiRoutes(
       );
     } catch (err: unknown) {
       const error = err as { statusCode?: number; status?: string; message?: string };
+      brokerFail(error.message || 'Message processing failed');
       opts.tracker?.recordRequestEnd({ id, ok: false, completionChars, error: error.message });
       return reply.status(error.statusCode || 500).send({
         error: {

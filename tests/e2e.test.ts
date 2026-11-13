@@ -68,7 +68,7 @@ describe('End-to-End HTTP Integration & Gateway Compatibility', () => {
       const data = await res.json();
       expect(data).toEqual({
         status: 'ok',
-        service: 'arena-web-api',
+        service: 'emo-ai-web',
       });
     });
 
@@ -78,10 +78,14 @@ describe('End-to-End HTTP Integration & Gateway Compatibility', () => {
       expect(res.headers.get('content-type')).toContain('application/json');
 
       const data = await res.json();
-      expect(data).toEqual({
-        status: 'ok',
-        service: 'arena-web-api',
-      });
+      // Task 14: /health expanded with LOCAL resilience state — the fixed
+      // identity fields are asserted and the new sections must exist.
+      expect(data.status).toBe('ok');
+      expect(data.service).toBe('emo-ai-web');
+      expect(data.gateway.alive).toBe(true);
+      expect(data.providers).toEqual(expect.any(Array));
+      expect(data.broker).toEqual(expect.any(Object));
+      expect(data.requests).toEqual(expect.any(Object));
     });
   });
 

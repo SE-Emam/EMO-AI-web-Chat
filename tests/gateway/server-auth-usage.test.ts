@@ -6,6 +6,7 @@ import { defaultGatewayConfig } from '../../src/gateway/config-store.js';
 import { UsageTracker } from '../../src/gateway/usage-tracker.js';
 
 function mockManager(models = ['claude-web:default']) {
+  let isRunning = true;
   const driver: ArenaDriver = {
     async listModels() { return models; },
     async sendMessage(_m: string, msgs: ChatMessage[], onChunk) {
@@ -24,6 +25,8 @@ function mockManager(models = ['claude-web:default']) {
     updateProvider: async (id: string, patch: any) => ({ id, ...patch }),
     saveConfig: async () => {},
     getConfig: () => defaultGatewayConfig(),
+    isServiceRunning: () => isRunning,
+    setServiceRunning: async (val: boolean) => { isRunning = val; return val; },
     close: async () => {},
   } as any;
 }
@@ -64,17 +67,42 @@ describe('gateway server auth/usage/management', () => {
     r = await fetch(`${base}/api/gateway/status`, { headers: { Authorization: 'Bearer mac' } });
     expect(r.status).toBe(200);
     const data = await r.json();
-    expect(data.gateway.baseUriDisplay).toBe('mac.ai/v1');
+    expect(data.gateway.baseUriDisplay).toBe('emo-web.ai/v1');
     expect(data.gateway.api).toBe('mac');
     expect(data.usage.sessionActive).toBe(true);
     expect(Array.isArray(data.providers)).toBe(true);
   });
 
-  it('serves management UI with mac.ai/v1 marker', async () => {
+  it('serves management UI with emo-web.ai/v1 marker', async () => {
     const r = await fetch(`${base}/`);
     expect(r.status).toBe(200);
     const html = await r.text();
-    expect(html).toContain('mac.ai/v1');
+    expect(html).toContain('emo-web.ai/v1');
     expect(html.toLowerCase()).toMatch(/provider|مزود|emo/);
+  });
+
+  it('toggles gateway service state and responds 503 when service is stopped', async () => {
+    // Toggle service off
+    let r = await fetch(`${base}/api/gateway/service-toggle`, { method: 'POST', headers: { Authorization: 'Bearer mac' } });
+    expect(r.status).toBe(200);
+    let res = await r.json();
+    expect(res.serviceRunning).toBe(false);
+
+    // Requesting chat completions while stopped returns 503
+    const body = JSON.stringify({ model: 'claude-web:default', messages: [{ role: 'user', content: 'test' }] });
+    r = await fetch(`${base}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer mac' }, body });
+    expect(r.status).toBe(503);
+    const err = await r.json();
+    expect(err.error.type).toBe('service_unavailable');
+
+    // Toggle service back on
+    r = await fetch(`${base}/api/gateway/service-toggle`, { method: 'POST', headers: { Authorization: 'Bearer mac' } });
+    expect(r.status).toBe(200);
+    res = await r.json();
+    expect(res.serviceRunning).toBe(true);
+
+    // Request succeeds again
+    r = await fetch(`${base}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer mac' }, body });
+    expect(r.status).toBe(200);
   });
 });

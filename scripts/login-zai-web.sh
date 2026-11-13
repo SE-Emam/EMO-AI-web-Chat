@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-export PATH="/Users/emamabdullaziz/.nvm/versions/node/v26.7.0/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 ZAI_PROFILE_DIR="${ZAI_WEB_USER_DATA_DIR:-$HOME/.arena-webbridge/zai-profile}"
 ARENA_PROFILE_DIR="${USER_DATA_DIR:-$HOME/.arena-webbridge/chrome-profile}"

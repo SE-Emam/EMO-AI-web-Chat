@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import type { ArenaDriver, ChatCompletionRequest, Config } from '../types.js';
+import type { ArenaDriver, ChatCompletionRequest, ChatMessage, Config } from '../types.js';
 import { loadConfig } from '../config.js';
 import {
   formatChatCompletionChunk,
@@ -21,10 +21,40 @@ import { registerAnthropicRoutes } from './anthropic-routes.js';
 import { registerGeminiRoutes } from './gemini-routes.js';
 import { isValidApiKey, redactSecrets, restoreSecrets } from '../gateway/security.js';
 import { SwarmCoordinator } from './swarm-coordinator.js';
-import { injectToolsInstruction, parseToolCallsFromResponse } from './tool-interpreter.js';
+import { injectToolsInstruction, parseToolCallsFromResponse, resolveToolChoice, decideToolOutcome, detectToolRefusal, hydrateToolResultNames, detectUnsupportedDependencyClaim, shouldAttemptNeutralCorrection, buildNeutralCorrectionMessage, deriveToolLifecycleState } from './tool-interpreter.js';
 import type { SwarmRequest } from '../types.js';
 import { chatSessionKey } from './chat-session-key.js';
 import { RequestBroker, brokerKey, type SentController } from '../protocol/request-broker.js';
+import { payloadFingerprint } from './request-broker-helpers.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { OwnerRoutingDriver, ProfileOwnerRouter, type ForwardBrokerContext } from '../ipc/profile-owner-router.js';
+import { defaultBrokerStorePath } from '../protocol/request-broker.js';
+import { SessionQueue } from '../sessions/session-queue.js';
+import { ToolPipelineLogger } from './tool-pipeline-logger.js';
+
+/**
+ * Task 11 — request-scoped receiver broker context for cross-process
+ * forwarding: the receiver's claim-once key flows into OwnerRoutingDriver
+ * when a ProfileBusyError triggers a forward. AsyncLocalStorage keeps the
+ * context per request — concurrent requests can never mix broker keys.
+ */
+const routingBrokerStorage = new AsyncLocalStorage<ForwardBrokerContext>();
+
+/** Provider selection point for Task 11: a DYNAMIC resolver wrapper — the
+ * resolved driver is re-evaluated per request (owner mandatory mod #3), so
+ * account switches and RoutingDriver chains are always reflected. */
+function makeRoutingAwareDriver(resolve: () => ArenaDriver): ArenaDriver {
+  const router = new ProfileOwnerRouter({
+    stateRoot: path.dirname(defaultBrokerStorePath()),
+    brokerStorePath: defaultBrokerStorePath(),
+  });
+  return new OwnerRoutingDriver({
+    resolve,
+    router,
+    nextForwardId: () => randomUUID(),
+    getBrokerContext: () => routingBrokerStorage.getStore() ?? null,
+  });
+}
 
 /**
  * Session identity for web-chat continuation (chatgpt-web-tool-bridge lesson:
@@ -124,7 +154,13 @@ function promptChars(messages: ChatCompletionRequest['messages'] | undefined): n
 export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions, config?: Partial<Config>): FastifyInstance {
   const gatewayMode = !isDriver(driverOrGateway) && (driverOrGateway as any)?.mode === 'gateway';
   const gateway = gatewayMode ? (driverOrGateway as GatewayServerOptions) : undefined;
-  const driver: ArenaDriver = gatewayMode ? gateway!.manager.getActiveDriver() : (driverOrGateway as ArenaDriver);
+  // Task 11 (category C): in gateway mode the driver selection point is
+  // wrapped with the dynamic OwnerRoutingDriver — ProfileBusyError triggers a
+  // forward to the owning process instead of a plain 503. Non-gateway usage
+  // (single local driver) is untouched.
+  const driver: ArenaDriver = gatewayMode
+    ? makeRoutingAwareDriver(() => gateway!.manager.getActiveDriver())
+    : (driverOrGateway as ArenaDriver);
 
   const loadedConfig = gatewayMode ? undefined : loadConfig(config);
   void loadedConfig;
@@ -134,7 +170,12 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
   // clients). Durable across gateway restarts; every claim is cross-process.
   const requestBroker = new RequestBroker();
 
-  const app = Fastify({ logger: false, bodyLimit: 2_500_000 });
+  // forceCloseConnections:'idle' pins Fastify's default explicitly: idle
+  // keep-alives are reaped at close start (never aborting in-flight work).
+  // Full shutdown termination is guaranteed by closeServerGracefully()
+  // (continuous idle reaping + final closeAllConnections guard) — see
+  // src/server/graceful-shutdown.ts.
+  const app = Fastify({ logger: false, bodyLimit: 2_500_000, forceCloseConnections: 'idle' });
 
   const isGatewayServiceActive = (): boolean => {
     if (gateway && typeof (gateway.manager as any).isServiceRunning === 'function') {
@@ -289,7 +330,40 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
     const healthHandler = async () => ({ status: 'ok', service: 'emo-ai-web' });
     app.get('/', healthHandler);
   }
-  app.get('/health', async () => ({ status: 'ok', service: 'emo-ai-web' }));
+  app.get('/health', async () => {
+    // Task 14 — LOCAL state only. /health NEVER sends a message to ChatGPT
+    // or any other provider (no driver calls in this handler), and never
+    // reports a provider as "available" without an actual verification —
+    // provider state stays 'not_checked'. No secrets are included.
+    const routing = driver as Partial<{ resilienceSnapshot?: () => unknown }>;
+    const brokerCounts = requestBroker.countByState();
+    const providers =
+      typeof routing.resilienceSnapshot === 'function' ? (routing.resilienceSnapshot() as unknown[]) : [];
+    return {
+      status: 'ok',
+      service: 'emo-ai-web',
+      gateway: {
+        alive: true,
+        uptimeMs: Math.round(process.uptime() * 1000),
+        mode: gatewayMode ? 'gateway' : 'driver',
+        browserServiceRunning: isGatewayServiceActive(),
+      },
+      // Profile ownership / IPC reachability are owned by the owner process;
+      // without an actual check from THIS endpoint they stay not_checked.
+      profileOwnership: { state: gatewayMode ? 'not_checked' : 'local_driver' },
+      ipc: { state: gatewayMode ? 'not_checked' : 'off' },
+      // Local resilience state per route (breaker states, last failure/success).
+      providers,
+      broker: brokerCounts,
+      requests: {
+        inFlight: gateway ? gateway.tracker.inFlightCount() : null,
+        queuedWaiting: SessionQueue.globalWaitingCount(),
+      },
+      notes: {
+        providerVerification: 'not_checked — /health never sends messages to providers',
+      },
+    };
+  });
   app.get('/ready', async (_req, reply) => {
     try {
       const models = await driver.listModels();
@@ -359,10 +433,25 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
     const apiKeyScope = getApiKey(request) || 'anon';
     const brokerSessionKey = chatSessionKey(request, body, body.messages as any);
     let brokerCtrl: SentController | null = null;
+    let brokerKeyStr: string | null = null;
     if (requestIdHeader) {
-      const brokerKeyStr = brokerKey(apiKeyScope, model, requestIdHeader);
-      const claim = await requestBroker.begin(brokerKeyStr, brokerSessionKey);
+      brokerKeyStr = brokerKey(apiKeyScope, model, requestIdHeader);
+      // Task 12.1 — UNIFIED X-Request-Id semantics: the fingerprint covers
+      // the EFFECTIVE body (post scoped-group model coercion) so the same
+      // id reused with a different request is an explicit CONFLICT with the
+      // same reason token the Anthropic/Gemini paths return — never a
+      // silent replay of a non-matching stored result. Legacy entries
+      // without a stored fingerprint keep the pre-existing replay behavior.
+      const claim = await requestBroker.begin(brokerKeyStr, brokerSessionKey, payloadFingerprint(body, 'openai'));
       if (!claim.allowed) {
+        if (claim.conflict) {
+          return reply.status(409).send({
+            error: {
+              message: `idempotency_key_reused_with_different_request: request id "${requestIdHeader}" was already used with a different payload; refusing to replay a non-matching result.`,
+              type: 'idempotency_key_reused_with_different_request',
+            },
+          });
+        }
         if (claim.state === 'completed' && claim.result !== undefined) {
           const stored = claim.result as { content: string; cleanText?: string; toolCalls?: any[]; id: string; model: string };
           if (body.stream) {
@@ -386,6 +475,9 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
             reply.raw.end();
             return;
           }
+          // Task 12.1: the replay marker is now uniform across the three
+          // EMO interfaces (Anthropic/Gemini already set it on JSON replays).
+          reply.header('x-emo-replay', 'true');
           return reply.send(stored);
         }
         return reply.status(409).send({
@@ -413,6 +505,13 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
     // unconfirmed (the message may have reached the web chat). markSent() is
     // called immediately before each driver send in every path below.
     const brokerFail = (message: string) => brokerCtrl?.fail({ retryable: true, error: message }).catch(() => {});
+
+    // Task 11: the receiver's claim flows into any cross-process forward.
+    const routingCtx: ForwardBrokerContext | null = brokerKeyStr
+      ? { key: brokerKeyStr, apiKeyScope, providerId: model, requestId: requestIdHeader }
+      : null;
+    const withRoutingCtx = <T>(fn: () => T): T =>
+      routingCtx ? routingBrokerStorage.run(routingCtx, fn) : fn();
 
     const isSwarmRequest =
       model.startsWith('swarm') ||
@@ -508,11 +607,19 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
     // 1. Tool Injection (if tools are provided by agent client)
     let processedMessages = body.messages as ChatCompletionRequest['messages'];
     const toolCount = Array.isArray(body.tools) ? body.tools.length : 0;
-    if (toolCount > 0) {
-      console.log(`[chat] model=${model} stream=${!!body.stream} tools=${toolCount} msgs=${processedMessages.length}`);
+    const toolRes = resolveToolChoice(body.tool_choice, toolCount);
+    const pipelineLog = new ToolPipelineLogger(id, (evt) => {
+      console.log(`[tool-pipeline] ${JSON.stringify({ ...evt, correlationId: undefined })} corrId=${evt.correlationId}`);
+    });
+    if (toolRes.shouldInjectTools) {
+      console.log(`[chat] model=${model} stream=${!!body.stream} tools=${toolCount} tool_choice=${typeof body.tool_choice === 'string' ? body.tool_choice : JSON.stringify(body.tool_choice) ?? 'auto'} msgs=${processedMessages.length}`);
+      pipelineLog.toolDefinitionsBuilt(toolCount);
+      pipelineLog.toolAvailableInRequest(toolCount);
+      processedMessages = hydrateToolResultNames(processedMessages as ChatCompletionRequest['messages']);
       processedMessages = injectToolsInstruction(processedMessages, body.tools, body.tool_choice);
+      pipelineLog.toolDefinitionsSent('openai');
     } else {
-      console.log(`[chat] model=${model} stream=${!!body.stream} tools=0 msgs=${processedMessages.length}`);
+      console.log(`[chat] model=${model} stream=${!!body.stream} tools=${toolCount} tool_choice=${body.tool_choice ?? 'none'} inject=false msgs=${processedMessages.length}`);
     }
 
     // 2. Secret Redaction (Mask sensitive API keys, tokens, passwords before leaving local host)
@@ -525,7 +632,6 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
 
     try {
       if (body.stream) {
-        const hasTools = !!(body.tools && Array.isArray(body.tools) && body.tools.length > 0);
         let headersSent = false;
         const ensureHeaders = () => {
           if (!headersSent) {
@@ -538,15 +644,16 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
           }
         };
         try {
-          if (hasTools) {
+          if (toolRes.shouldParseTools) {
             // Buffer when tools are present so we can emit proper tool_calls (not raw text deltas).
             let full = '';
             brokerCtrl?.markSent();
-            const res = await driver.sendMessage(model, processedMessages, (chunk: string) => {
+            const res = await withRoutingCtx(() => driver.sendMessage(model, processedMessages, (chunk: string) => {
               full += restoreSecrets(chunk, secretMappings);
-            }, abortController.signal, chatSessionKey(request, body, processedMessages));
+            }, abortController.signal, chatSessionKey(request, body, processedMessages)));
             let fullResponse = restoreSecrets(res || full, secretMappings);
             completionChars = String(fullResponse || '').length;
+            pipelineLog.modelResponseReceived(true);
             const toolResult = parseToolCallsFromResponse(fullResponse);
             if (!toolResult.hasToolCalls && /tool[_ -]?call/i.test(fullResponse)) {
               console.log(`[chat] WARNING: reply contains "tool_call" but none parsed (len=${fullResponse.length}). Tail: ${fullResponse.slice(-250)}`);
@@ -558,16 +665,53 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
               const unknown = (toolResult.toolCalls || []).filter((c: any) => !known.has(c.function?.name));
               if (unknown.length) {
                 console.log(`[chat] WARNING: parsed tool name(s) not in provided tools: ${unknown.map((c: any) => c.function?.name).join(', ')}`);
+                for (const u of unknown) {
+                  pipelineLog.toolCallValidationFailed(u.id, u.function?.name, 'unknown_tool');
+                }
               }
             }
-            ensureHeaders();
-            if (toolResult.hasToolCalls && toolResult.toolCalls && toolResult.toolCalls.length > 0) {
-              if (toolResult.cleanText) {
-                reply.raw.write(formatChatCompletionChunk(id, model, toolResult.cleanText));
+            const decision = decideToolOutcome(toolResult, toolRes);
+            if (decision.protocolError) {
+              pipelineLog.toolCallValidationFailed('', decision.toolCalls?.[0]?.function?.name ?? '', decision.protocolError);
+            }
+            // P2 — NOTE (review-verified): this SSE branch BUFFERS the whole
+            // reply — nothing is written to the client before the tool
+            // decision below — so a corrective retry could technically be
+            // applied here without touching the streaming design. P2
+            // deliberately scopes the correction to the non-streaming path;
+            // here the claim is only classified and logged. (The no-tools SSE
+            // branch below streams chunks live — there, and only there, the
+            // reply is already partially delivered to the client.)
+            {
+              const streamClaim = detectUnsupportedDependencyClaim(decision.cleanText || fullResponse);
+              if (streamClaim.detected && !processedMessages.some((m) => (m as { role?: string }).role === 'tool')) {
+                pipelineLog.unsupportedDependencyClaimDetected(streamClaim.fingerprint, streamClaim.category);
               }
-              reply.raw.write(formatToolCallChunks(id, model, toolResult.toolCalls as any));
+            }
+            for (const tc of decision.toolCalls || []) {
+              pipelineLog.toolCallDetected(tc.id, tc.function.name);
+            }
+            ensureHeaders();
+            if (decision.emitToolCalls && decision.toolCalls) {
+              if (decision.cleanText) {
+                reply.raw.write(formatChatCompletionChunk(id, model, decision.cleanText));
+              }
+              reply.raw.write(formatToolCallChunks(id, model, decision.toolCalls as any));
               reply.raw.write(formatDoneChunk());
-              await brokerCtrl?.complete({ id, model, content: fullResponse, cleanText: toolResult.cleanText, toolCalls: toolResult.toolCalls }).catch(() => {});
+              await brokerCtrl?.complete({ id, model, content: fullResponse, cleanText: decision.cleanText, toolCalls: decision.toolCalls }).catch(() => {});
+            } else if (decision.protocolError) {
+              // tool contract violated (required / specific tool missing):
+              // return a protocol error instead of the model's text refusal.
+              if (decision.refusalDetected) pipelineLog.toolRefusalDetected();
+              reply.raw.write(`data: ${JSON.stringify({
+                error: {
+                  message: `Model did not produce a required tool call${decision.refusalDetected ? ' (tool refusal detected)' : ''}. tool_choice was "${typeof body.tool_choice === 'string' ? body.tool_choice : JSON.stringify(body.tool_choice)}".`,
+                  type: decision.protocolError,
+                  code: 400,
+                },
+              })}\n\n`);
+              reply.raw.write(formatDoneChunk());
+              await brokerCtrl?.fail({ retryable: true, error: decision.protocolError }).catch(() => {});
             } else {
               if (fullResponse) reply.raw.write(formatChatCompletionChunk(id, model, fullResponse));
               reply.raw.write(formatChatCompletionChunk(id, model, '', 'stop'));
@@ -579,13 +723,13 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
           } else {
             let sseFull = '';
             brokerCtrl?.markSent();
-            await driver.sendMessage(model, processedMessages, (chunk: string) => {
+            await withRoutingCtx(() => driver.sendMessage(model, processedMessages, (chunk: string) => {
               const restoredChunk = restoreSecrets(chunk, secretMappings);
               sseFull += restoredChunk;
               completionChars += restoredChunk.length;
               ensureHeaders();
               reply.raw.write(formatChatCompletionChunk(id, model, restoredChunk));
-            }, abortController.signal, chatSessionKey(request, body, processedMessages));
+            }, abortController.signal, chatSessionKey(request, body, processedMessages)));
             ensureHeaders();
             reply.raw.write(formatChatCompletionChunk(id, model, '', 'stop'));
             reply.raw.write(formatDoneChunk());
@@ -624,22 +768,29 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
       }
 
       brokerCtrl?.markSent();
-      let fullResponse = await driver.sendMessage(model, processedMessages, undefined, abortController.signal, chatSessionKey(request, body, processedMessages));
+      let fullResponse = await withRoutingCtx(() => driver.sendMessage(model, processedMessages, undefined, abortController.signal, chatSessionKey(request, body, processedMessages)));
       fullResponse = restoreSecrets(fullResponse, secretMappings);
 
       // Check if model called any tools
-      if (body.tools && Array.isArray(body.tools) && body.tools.length > 0) {
+      if (toolRes.shouldParseTools) {
         const toolResult = parseToolCallsFromResponse(fullResponse);
-        if (toolResult.hasToolCalls && toolResult.toolCalls && toolResult.toolCalls.length > 0) {
-          completionChars = String(toolResult.cleanText || fullResponse).length;
+        let decision = decideToolOutcome(toolResult, toolRes);
+        for (const tc of decision.toolCalls || []) {
+          pipelineLog.toolCallDetected(tc.id, tc.function.name);
+        }
+        if (decision.protocolError) {
+          pipelineLog.toolCallValidationFailed('', decision.toolCalls?.[0]?.function?.name ?? '', decision.protocolError);
+        }
+        if (decision.emitToolCalls && decision.toolCalls) {
+          completionChars = String(decision.cleanText || fullResponse).length;
           await brokerCtrl?.complete(formatChatCompletionResponse(
             id,
             model,
-            toolResult.cleanText,
+            decision.cleanText,
             undefined,
             undefined,
             undefined,
-            toolResult.toolCalls,
+            decision.toolCalls,
             'tool_calls'
           ) as unknown as object).catch(() => {});
           gateway?.tracker.recordRequestEnd({ id, ok: true, completionChars });
@@ -647,14 +798,119 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
             formatChatCompletionResponse(
               id,
               model,
-              toolResult.cleanText,
+              decision.cleanText,
               undefined,
               undefined,
               undefined,
-              toolResult.toolCalls,
+              decision.toolCalls,
               'tool_calls'
             )
           );
+        }
+
+        // ------------------------------------------------------------------
+        // P2 — ONE neutral correction when the model invented an external
+        // dependency (or refused despite an announced toolset). The policy is
+        // evidence-based: a real tool result or a confirmed transport failure
+        // disables the correction (a real failure is never disguised), an
+        // already-emitted tool call is never re-sent, and the correction
+        // text never repeats the model's own claim.
+        // ------------------------------------------------------------------
+        const claim = detectUnsupportedDependencyClaim(decision.cleanText || fullResponse);
+        const hasToolResultEvidence = processedMessages.some((m) => (m as { role?: string }).role === 'tool');
+        const lifecycle = deriveToolLifecycleState({
+          toolsAnnounced: toolCount > 0,
+          parsed: toolResult,
+          resolution: toolRes,
+          transportFailureObserved: false,
+          modelClaimDetected: claim.detected,
+        });
+        if (claim.detected && !hasToolResultEvidence) {
+          pipelineLog.unsupportedDependencyClaimDetected(claim.fingerprint, claim.category);
+        }
+        if (shouldAttemptNeutralCorrection({
+          resolution: toolRes,
+          decision,
+          claim,
+          refusalDetected: decision.refusalDetected || detectToolRefusal(decision.cleanText || fullResponse),
+          hasToolResultEvidence,
+          transportFailureObserved: lifecycle.transportFailureConfirmed,
+          alreadyAttempted: false,
+        })) {
+          pipelineLog.neutralCorrectionAttempted(claim.detected ? claim.category : 'tool_refusal');
+          // The assistant turn is included so the driver's stored-prefix
+          // alignment stays intact (the delta then carries ONLY the neutral
+          // correction — the model's own reply is never re-sent).
+          const correctionMessages: ChatMessage[] = [
+            ...processedMessages,
+            { role: 'assistant', content: decision.cleanText || fullResponse },
+            { role: 'user', content: buildNeutralCorrectionMessage() },
+          ];
+          try {
+            const correctedRaw = await withRoutingCtx(() => driver.sendMessage(
+              model,
+              correctionMessages,
+              undefined,
+              abortController.signal,
+              chatSessionKey(request, body, correctionMessages)
+            ));
+            const correctedText = restoreSecrets(correctedRaw, secretMappings);
+            const correctedParsed = parseToolCallsFromResponse(correctedText);
+            const correctedDecision = decideToolOutcome(correctedParsed, toolRes);
+            if (correctedDecision.emitToolCalls && correctedDecision.toolCalls) {
+              for (const tc of correctedDecision.toolCalls) {
+                pipelineLog.toolCallDetected(tc.id, tc.function.name);
+              }
+              completionChars = String(correctedDecision.cleanText || correctedText).length;
+              await brokerCtrl?.complete(formatChatCompletionResponse(
+                id,
+                model,
+                correctedDecision.cleanText,
+                undefined,
+                undefined,
+                undefined,
+                correctedDecision.toolCalls,
+                'tool_calls'
+              ) as unknown as object).catch(() => {});
+              gateway?.tracker.recordRequestEnd({ id, ok: true, completionChars });
+              return reply.send(
+                formatChatCompletionResponse(
+                  id,
+                  model,
+                  correctedDecision.cleanText,
+                  undefined,
+                  undefined,
+                  undefined,
+                  correctedDecision.toolCalls,
+                  'tool_calls'
+                )
+              );
+            }
+            // The correction produced prose: under `auto` that prose is the
+            // answer; under `required`/specific the protocol error still
+            // applies (a refusal is never passed off as success).
+            fullResponse = correctedText;
+            decision = correctedDecision;
+          } catch (correctionErr) {
+            // A REAL transport failure during the correction: keep the real
+            // error, never mask it behind the correction text.
+            pipelineLog.transportFailureConfirmed(
+              correctionErr instanceof Error ? correctionErr.name : 'unknown'
+            );
+            throw correctionErr;
+          }
+        }
+        // tool contract violated (required / specific tool missing) → protocol error
+        if (decision.protocolError) {
+          if (decision.refusalDetected) pipelineLog.toolRefusalDetected();
+          await brokerCtrl?.fail({ retryable: true, error: decision.protocolError }).catch(() => {});
+          gateway?.tracker.recordRequestEnd({ id, ok: false, completionChars: 0, error: decision.protocolError });
+          return reply.status(400).send({
+            error: {
+              message: `Model did not produce a required tool call${decision.refusalDetected ? ' (tool refusal detected)' : ''}. tool_choice was "${typeof body.tool_choice === 'string' ? body.tool_choice : JSON.stringify(body.tool_choice)}".`,
+              type: decision.protocolError,
+            },
+          });
         }
       }
 
@@ -693,6 +949,8 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
     apiKey,
     getValidApiKeys: () => (gateway && typeof gateway.manager.getValidApiKeys === 'function' ? gateway.manager.getValidApiKeys() : [apiKey]),
     getScopedGroup: (key: string) => (gateway && typeof (gateway.manager as any).getGroupForApiKey === 'function' ? (gateway.manager as any).getGroupForApiKey(key) : undefined),
+    // Task 12: the ONE shared broker instance/store across all three protocols.
+    broker: requestBroker,
   });
 
   registerGeminiRoutes(app, {
@@ -702,6 +960,8 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
     apiKey,
     getValidApiKeys: () => (gateway && typeof gateway.manager.getValidApiKeys === 'function' ? gateway.manager.getValidApiKeys() : [apiKey]),
     getScopedGroup: (key: string) => (gateway && typeof (gateway.manager as any).getGroupForApiKey === 'function' ? (gateway.manager as any).getGroupForApiKey(key) : undefined),
+    // Task 12: the ONE shared broker instance/store across all three protocols.
+    broker: requestBroker,
   });
 
   // Dedicated Swarm / Subagents Orchestrator Endpoints

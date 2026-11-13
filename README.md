@@ -1,19 +1,25 @@
-# Arena WebBridge (`arena-web-api`)
+# EMO-AI-web (`emo-ai-web`)
 
-> OpenAI-compatible local Web-to-API bridge for [Arena](https://arena.ai/) (LMSYS Chatbot Arena).
+> OpenAI-compatible local web-to-API gateway and agent bridge (formerly Arena WebBridge).
 
-Arena WebBridge automates the direct chat interface on `https://arena.ai` using a persistent real Chrome browser profile. It seamlessly handles Cloudflare verification, saves your authenticated session, and exposes a high-performance, standard OpenAI API interface (`/v1/chat/completions` with streaming support and `/v1/models`) on port `8989`.
+EMO-AI-web automates web AI chat interfaces using persistent browser profiles, manages providers/accounts, and exposes a high-performance OpenAI-compatible API interface (`/v1/chat/completions` with streaming support and `/v1/models`) on port `8989`, plus a local management UI.
 
 ---
 
 ## Key Features
 
 - **Standard OpenAI API Compatibility**: Implements `/v1/chat/completions` (streaming SSE and non-streaming) and `/v1/models`.
+- **Autonomous Swarm Coordinator (موجه الوكلاء)**: Automated decomposition of high-level coding goals into 4 parallel specialized subagents (`architect`, `coder`, `reviewer`, `tester`), with unified deliverable synthesis.
+- **Native Tool & Function Calling (`tools`)**: Injects and interprets OpenAPI tool schemas for web-based models, returning standard OpenAI `tool_calls` to Cursor, Cline, and Roo-Code.
+- **Tab Worker Pool & Concurrency**: Manages multiple concurrent browser tabs per profile to process parallel requests without serialization bottlenecks.
+- **Local Secret Redaction**: Auto-masks API keys, secrets, tokens, and credentials from outgoing prompts, restoring them transparently upon return.
+- **Auto-Compaction & Session Reset**: Automatically compacts context and resets sessions when turn limits are approached to prevent token bloat and page crashes.
 - **Direct Chat Automation**: Automates Arena's direct chat mode, selecting models and streaming tokens in real time.
 - **Persistent Profile & Cloudflare Bypass**: Stores cookies, local storage, and session tokens in `~/.arena-webbridge/chrome-profile` to avoid repeated re-verifications.
 - **Interactive Verification**: Single-command interactive browser launch (`login`) to solve Cloudflare Turnstile challenges or log in with Google/GitHub once.
 - **Model Resolution & Aliasing**: Smart model mapping for major models (`claude-3-7-sonnet`, `claude-3-5-sonnet`, `deepseek-r1`, `gpt-4o`, `gemini-2.0-flash`, `qwen-2.5-max`, etc.).
 - **Agent Ready**: Plug-and-play with OpenCode, Cline, Cursor, Roo-Code, Pi, and multi-provider aggregators like Emo-AI-Gateway, New API, and One API.
+- **Interactive Swarm Dashboard**: Dedicated visual tab in EMO-AI Gateway UI (`http://127.0.0.1:8989/`) to launch and monitor swarms.
 
 ---
 
@@ -112,8 +118,59 @@ webbridge --help
 | `serve` | Runs the API server (default command) | `webbridge serve --port 8989` |
 | `models`| Lists supported models in tabular or JSON format | `webbridge models --json` |
 | `status`| Checks if persistent profile and session cookies exist | `webbridge status` |
+| `swarm` | Launches the autonomous multi-agent swarm coordinator | `webbridge swarm "Build auth system"` |
 
 ### Command Options
+
+#### `webbridge swarm [goal]`
+- `[goal]`: The coding task or goal to execute with the specialized subagent swarm.
+- `-m, --mode <mode>`: Execution mode: `auto` (default), `pipeline`, `parallel`.
+
+---
+
+## 🚀 Autonomous Swarm Coordinator & Multi-Agent Engine
+
+Arena WebBridge includes an autonomous **Swarm Coordinator (موجه الوكلاء)** that automatically decomposes complex software engineering goals into discrete tasks handled by 4 specialized subagents in parallel:
+
+1. **Architect (`architect`)**: Analyzes requirements, models schemas, designs algorithms, and establishes system boundaries (routed to `deepseek-r1` / `o1` / `o3-mini`).
+2. **Coder (`coder`)**: Implements clean, complete, production-grade code with full types and error handling (routed to `claude-3-7-sonnet` / `gpt-4o` / `qwen-2.5-max`).
+3. **Reviewer (`reviewer`)**: Audits security vulnerabilities, race conditions, edge-case bugs, and performance regressions.
+4. **Tester (`tester`)**: Authors comprehensive unit, integration, and property test suites (routed to `gemini-2.0-flash` / `haiku`).
+
+### Using Swarm via CLI
+```bash
+# Run swarm with default auto mode
+npm run swarm "Build a rate limiter with Redis and vitest tests"
+
+# Or using the webbridge binary
+npx webbridge swarm "Audit repository security" --mode parallel
+```
+
+### Using Swarm via OpenAI API (`/v1/chat/completions`)
+Any OpenAI client (Cursor, Cline, Roo-Code, Python, cURL) can trigger the Swarm by specifying any `swarm:*` model:
+- `swarm:auto`
+- `swarm:fullstack`
+- `swarm:pipeline`
+- `swarm:parallel`
+
+```bash
+curl -X POST http://127.0.0.1:8989/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "swarm:auto",
+    "stream": true,
+    "messages": [
+      {"role": "user", "content": "Design and implement a resilient caching layer"}
+    ]
+  }'
+```
+
+### Dedicated Swarm API
+- `POST /v1/agents/swarm`: Submit structured swarm goals and stream live events.
+- `GET /v1/agents/swarm/status`: Inspect coordinator status, worker roles, and active sessions.
+- `GET /v1/agents/swarm/sessions`: Retrieve recent swarm execution deliverables and history.
+
+> For complete architectural specifications and deep documentation, see [docs/swarm-and-agentic-features.md](docs/swarm-and-agentic-features.md).
 
 #### `webbridge login`
 - `--url <url>`: Arena URL to navigate to (default: `https://arena.ai`)
@@ -388,10 +445,10 @@ npm run emo
 ```
 
 Outputs:
-- `base uri: mac.ai/v1`
-- `api: mac`
+- `base uri: emo-web.ai/v1`
+- `api: emo.web`
 
-The UI opens in your browser for provider settings, model selection, runtime/start-stop, and session usage (heartbeat resets when the browser UI closes). To use `mac.ai` locally, add an optional hosts mapping: `127.0.0.1 mac.ai`.
+The UI opens in your browser for provider settings, model selection, runtime/start-stop, and session usage (heartbeat resets when the browser UI closes). To use `emo-web.ai` locally, add an optional hosts mapping: `127.0.0.1 emo-web.ai`.
 
 ---
 

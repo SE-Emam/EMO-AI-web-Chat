@@ -1,0 +1,502 @@
+
+ RUN  v3.2.7 /Users/emamabdullaziz/Desktop/web
+
+stdout | tests/sessions/ownership-ledger.test.ts > OwnershipLedger > a LIVE pid with a STALE heartbeat is NEVER stolen (busy — owner ruling: stale heartbeat ≠ death)
+[ownership-ledger] WARNING: profile "/profiles/p3" owner slow-owner (pid 18875) is ALIVE but heartbeat is stale (120s > 30s TTL) — refusing takeover, reporting busy.
+
+stdout | tests/protocol/request-broker.test.ts > RequestBroker > fail AFTER send is upgraded to unconfirmed EVEN IF caller says retryable (override logged)
+[request-broker] WARNING: retryable=true requested AFTER send for 09e5a390df9d… — upgraded to unconfirmed (override logged)
+
+stdout | tests/e2e.test.ts > End-to-End HTTP Integration & Gateway Compatibility > 4. Non-Streaming Chat Completion (POST /v1/chat/completions) > returns 200 with full OpenAI Chat Completion JSON response
+[chat] model=claude-3-7-sonnet stream=false tools=0 msgs=2
+
+stdout | tests/e2e.test.ts > End-to-End HTTP Integration & Gateway Compatibility > 4. Non-Streaming Chat Completion (POST /v1/chat/completions) > defaults to non-streaming when stream field is omitted
+[chat] model=deepseek-r1 stream=false tools=0 msgs=1
+
+stdout | tests/e2e.test.ts > End-to-End HTTP Integration & Gateway Compatibility > 4. Non-Streaming Chat Completion (POST /v1/chat/completions) > handles model aliases properly in chat request
+[chat] model=claude-3.5-sonnet stream=false tools=0 msgs=1
+
+stdout | tests/e2e.test.ts > End-to-End HTTP Integration & Gateway Compatibility > 5. Streaming Chat Completion SSE (POST /v1/chat/completions stream: true) > returns SSE event stream with valid chunks terminating in [DONE]
+[chat] model=gpt-4o stream=true tools=0 msgs=1
+
+stdout | tests/e2e.test.ts > End-to-End HTTP Integration & Gateway Compatibility > 6. Error Handling & Validation > returns 500 when driver fails in non-streaming mode
+[chat] model=auto stream=false tools=0 msgs=1
+
+stdout | tests/e2e.test.ts > End-to-End HTTP Integration & Gateway Compatibility > 6. Error Handling & Validation > returns 500 when driver fails in streaming mode before headers are sent
+[chat] model=auto stream=true tools=0 msgs=1
+
+stdout | tests/e2e.test.ts > End-to-End HTTP Integration & Gateway Compatibility > 6. Error Handling & Validation > emits error chunk when driver fails after stream has begun
+[chat] model=auto stream=true tools=0 msgs=1
+
+stdout | tests/e2e.test.ts > End-to-End HTTP Integration & Gateway Compatibility > 7. Client Abort / Cancellation Handling > aborts driver execution when client cancels HTTP request mid-stream
+[chat] model=auto stream=true tools=0 msgs=1
+
+stdout | tests/server/gemini-broker.test.ts > Gemini /v1beta × unified broker (Task 12) > 5. stream interrupted after markSent → unconfirmed; re-issue denied 409
+[request-broker] WARNING: retryable=true requested AFTER send for 6bba9429e84b… — upgraded to unconfirmed (override logged)
+
+stdout | tests/server/gemini-broker.test.ts > Gemini /v1beta × unified broker (Task 12) > 11. send INITIATED then failure → unconfirmed; re-issue denied (no blind retry)
+[request-broker] WARNING: retryable=true requested AFTER send for 2b920e493fa4… — upgraded to unconfirmed (override logged)
+
+ ✓ tests/protocol/request-broker.test.ts (9 tests) 1700ms
+   ✓ RequestBroker > TWO REAL PROCESSES claim the same requestId: exactly one is allowed  1399ms
+ ✓ tests/e2e.test.ts (22 tests) 1247ms
+ ✓ tests/server/gemini-broker.test.ts (13 tests) 1323ms
+   ✓ Gemini /v1beta × unified broker (Task 12) > 2. duplicate while RUNNING → 409 denied, no second execution  305ms
+ ✓ tests/sessions/ownership-ledger.test.ts (8 tests) 1810ms
+   ✓ OwnershipLedger > TWO REAL PROCESSES: one acquires, the other is refused with owner info  1774ms
+stdout | tests/server/swarm-stream-broker.test.ts > Swarm streaming × RequestBroker (Task 10) > mid-stream failure AFTER the swarm started → unconfirmed; same X-Request-Id cannot re-execute
+[request-broker] WARNING: retryable=true requested AFTER send for d7a9b3d01326… — upgraded to unconfirmed (override logged)
+
+ ✓ tests/protocol/broker-fingerprint-racer.test.ts (5 tests) 2459ms
+   ✓ unified broker × REAL processes (Task 12) > two REAL processes race the same key+fingerprint: exactly one ALLOWED, one DENIED:running  1407ms
+   ✓ unified broker × REAL processes (Task 12) > oversize result (>256KB) cross-process: completed state-only → DENIED with a clear "too large" reason  415ms
+stdout | tests/browser/session-pages.test.ts > Task 6 driver integration: session pages through the full call chain > TWO sessions run CONCURRENTLY on TWO DIFFERENT pages (page identity asserted during execution)
+[RecordingDriver] session=task-a
+[RecordingDriver] Navigating to https://chat.test...
+[RecordingDriver] session=task-b
+[RecordingDriver] Navigating to https://chat.test...
+
+stdout | tests/browser/session-pages.test.ts > Task 6 driver integration: session pages through the full call chain > TWO sessions run CONCURRENTLY on TWO DIFFERENT pages (page identity asserted during execution)
+[RecordingDriver] Prompt: 12 chars (fresh session)
+[RecordingDriver] Prompt: 12 chars (fresh session)
+
+stdout | tests/server/swarm-stream-broker.test.ts > Swarm streaming × RequestBroker (Task 10) > broker policy backing the route: pre-send failure keeps retry, post-markSent failure never does
+[request-broker] WARNING: retryable=true requested AFTER send for 93a9604bbd25… — upgraded to unconfirmed (override logged)
+
+ ✓ tests/server/swarm-stream-broker.test.ts (3 tests) 320ms
+stdout | tests/browser/session-pages.test.ts > Task 6 driver integration: session pages through the full call chain > SAME session key: two requests serialize on the SAME page (no interleave)
+[RecordingDriver] session=same-task
+[RecordingDriver] Navigating to https://chat.test...
+
+stdout | tests/browser/session-pages.test.ts > Task 6 driver integration: session pages through the full call chain > SAME session key: two requests serialize on the SAME page (no interleave)
+[RecordingDriver] Prompt: 12 chars (fresh session)
+
+ ✓ tests/gateway/launcher.test.ts (2 tests) 793ms
+   ✓ EMO.ai launcher > prints help with gateway outputs  791ms
+stdout | tests/browser/session-pages.test.ts > Task 6 driver integration: session pages through the full call chain > SAME session key: two requests serialize on the SAME page (no interleave)
+[RecordingDriver] session=same-task
+[RecordingDriver] Continuation check: no (client sent 1 tracked msg(s), stored 2)
+[RecordingDriver] Navigating to https://chat.test...
+
+stdout | tests/browser/session-pages.test.ts > Task 6 driver integration: session pages through the full call chain > SAME session key: two requests serialize on the SAME page (no interleave)
+[RecordingDriver] Prompt: 12 chars (fresh session)
+
+stdout | tests/server/anthropic-broker.test.ts > Anthropic /v1/messages × unified broker (Task 12) > 5. stream interrupted after markSent → unconfirmed; re-issue denied 409
+[request-broker] WARNING: retryable=true requested AFTER send for bcef2ffc8016… — upgraded to unconfirmed (override logged)
+
+stdout | tests/browser/session-pages.test.ts > Task 6 driver integration: session pages through the full call chain > a session re-binds to ITS OWN page across sequential requests
+[RecordingDriver] session=sticky
+[RecordingDriver] Navigating to https://chat.test...
+
+stdout | tests/browser/session-pages.test.ts > Task 6 driver integration: session pages through the full call chain > a session re-binds to ITS OWN page across sequential requests
+[RecordingDriver] Prompt: 9 chars (fresh session)
+
+stdout | tests/browser/session-pages.test.ts > Task 6 driver integration: session pages through the full call chain > a session re-binds to ITS OWN page across sequential requests
+[RecordingDriver] session=sticky
+[RecordingDriver] Continuation check: no (client sent 1 tracked msg(s), stored 2)
+[RecordingDriver] Navigating to https://chat.test...
+
+stdout | tests/browser/session-pages.test.ts > Task 6 driver integration: session pages through the full call chain > a session re-binds to ITS OWN page across sequential requests
+[RecordingDriver] Prompt: 9 chars (fresh session)
+
+ ✓ tests/browser/session-pages.test.ts (3 tests) 433ms
+stdout | tests/sessions/process-lock.test.ts > ProcessLock > Task 10: does NOT delete the lock when ownerInstanceId belongs to someone else
+[ProcessLock] WARNING: lock "/var/folders/78/ggfty0h91k797r7nkl3qmdf80000gn/T/emo-lock-D1lyMj/9347ed5366743660434e.lock" is not owned by 18872-d074e3c6 (owner=someone-else) — refusing to delete another owner's lock.
+
+stdout | tests/sessions/process-lock.test.ts > ProcessLock > Task 10: does NOT auto-delete a CORRUPT lock file on release
+[ProcessLock] WARNING: cannot safely release lock "/var/folders/78/ggfty0h91k797r7nkl3qmdf80000gn/T/emo-lock-qIslOm/93ad9a9dae6d1c15588a.lock" — contents unreadable/corrupt; leaving the file in place (dead-owner steal is still possible after 5000ms).
+
+stdout | tests/sessions/process-lock.test.ts > ProcessLock > Task 10: does NOT delete a lock that cannot be verified (missing ownerInstanceId)
+[ProcessLock] WARNING: lock "/var/folders/78/ggfty0h91k797r7nkl3qmdf80000gn/T/emo-lock-T8WRzs/c4aa8597c2f376ad4cfe.lock" is not owned by 18872-58870dd5 (owner=unknown) — refusing to delete another owner's lock.
+
+stdout | tests/sessions/process-lock.test.ts > ProcessLock > Task 10: after a refused (unverifiable) release, the dead-owner steal path still works
+[ProcessLock] WARNING: cannot safely release lock "/var/folders/78/ggfty0h91k797r7nkl3qmdf80000gn/T/emo-lock-qnXVpU/af79d53663d7fbe4d926.lock" — contents unreadable/corrupt; leaving the file in place (dead-owner steal is still possible after 50ms).
+
+ ✓ tests/sessions/process-lock.test.ts (11 tests) 2982ms
+   ✓ ProcessLock > does NOT steal a lock held by a live process (the current process)  489ms
+   ✓ ProcessLock > exactly ONE of two real child processes claims the same resource simultaneously  1669ms
+   ✓ ProcessLock > two real child processes run under the lock one after the other (serialized, both succeed)  814ms
+stdout | tests/server/openai-fingerprint.test.ts > OpenAI path × unified fingerprint semantics (Task 12.1) > same X-Request-Id + DIFFERENT payload → explicit 409 CONFLICT with the unified token; never a silent replay
+[chat] model=gpt-test stream=false tools=0 msgs=1
+
+ ✓ tests/server/cross-protocol-broker.test.ts (3 tests) 179ms
+stdout | tests/server/openai-fingerprint.test.ts > OpenAI path × unified fingerprint semantics (Task 12.1) > new OpenAI entries persist the fingerprint (diff-detection is real)
+[chat] model=gpt-test stream=false tools=0 msgs=1
+
+stdout | tests/server/anthropic-broker.test.ts > Anthropic /v1/messages × unified broker (Task 12) > 11. send INITIATED then failure → unconfirmed; re-issue denied (no blind retry)
+[request-broker] WARNING: retryable=true requested AFTER send for 68627f8c625d… — upgraded to unconfirmed (override logged)
+
+stdout | tests/server/openai-fingerprint.test.ts > OpenAI path × unified fingerprint semantics (Task 12.1) > completed replay with a STORED fingerprint keeps working (Task 9 semantics preserved)
+[chat] model=gpt-test stream=false tools=0 msgs=1
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > detects Cloudflare challenge and throws informative error
+[ArenaDriver] Starting sendMessage with model: gpt-4o
+[ArenaDriver] Getting page...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > detects Cloudflare challenge and throws informative error
+[ArenaDriver] Page URL is: about:blank
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to direct chat, fills prompt, clicks send, and streams chunks
+[ArenaDriver] Starting sendMessage with model: claude-3-5-sonnet
+[ArenaDriver] Getting page...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to direct chat, fills prompt, clicks send, and streams chunks
+[ArenaDriver] Page URL is: about:blank
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to direct chat, fills prompt, clicks send, and streams chunks
+[ArenaDriver] Preparing direct page: https://arena.ai/text/direct
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to direct chat, fills prompt, clicks send, and streams chunks
+[ArenaDriver] Finding prompt input...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to direct chat, fills prompt, clicks send, and streams chunks
+[ArenaDriver] Filled prompt. Finding send button...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to direct chat, fills prompt, clicks send, and streams chunks
+[ArenaDriver] Clicking send button...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to direct chat, fills prompt, clicks send, and streams chunks
+[ArenaDriver] Entering streamResponse...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to direct chat, fills prompt, clicks send, and streams chunks
+[ArenaDriver] poll 0 mode=direct: generating=false, sawGenerating=false, parts=1, currentText="Paris", stable=0
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to direct chat, fills prompt, clicks send, and streams chunks
+[ArenaDriver] Generation completed! mode=direct parts=1 chars=31
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > aborts during generation and attempts to click stop button
+[ArenaDriver] Starting sendMessage with model: gpt-4o
+[ArenaDriver] Getting page...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > aborts during generation and attempts to click stop button
+[ArenaDriver] Page URL is: about:blank
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > aborts during generation and attempts to click stop button
+[ArenaDriver] Preparing direct page: https://arena.ai/text/direct
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > aborts during generation and attempts to click stop button
+[ArenaDriver] Selecting model: gpt-4o
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > aborts during generation and attempts to click stop button
+[ArenaDriver] Finding prompt input...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > aborts during generation and attempts to click stop button
+[ArenaDriver] Filled prompt. Finding send button...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > aborts during generation and attempts to click stop button
+[ArenaDriver] Clicking send button...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > aborts during generation and attempts to click stop button
+[ArenaDriver] Entering streamResponse...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > aborts during generation and attempts to click stop button
+[ArenaDriver] poll 0 mode=direct: generating=true, sawGenerating=false, parts=1, currentText="Partial text before abort", stable=0
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > clicks direct chat tab and selects model if present on page
+[ArenaDriver] Starting sendMessage with model: gpt-4o
+[ArenaDriver] Getting page...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > clicks direct chat tab and selects model if present on page
+[ArenaDriver] Page URL is: about:blank
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > clicks direct chat tab and selects model if present on page
+[ArenaDriver] Preparing direct page: https://arena.ai/text/direct
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > clicks direct chat tab and selects model if present on page
+[ArenaDriver] Selecting model: gpt-4o
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > clicks direct chat tab and selects model if present on page
+[ArenaDriver] Finding prompt input...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > clicks direct chat tab and selects model if present on page
+[ArenaDriver] Filled prompt. Finding send button...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > clicks direct chat tab and selects model if present on page
+[ArenaDriver] Clicking send button...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > clicks direct chat tab and selects model if present on page
+[ArenaDriver] Entering streamResponse...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > clicks direct chat tab and selects model if present on page
+[ArenaDriver] poll 0 mode=direct: generating=false, sawGenerating=false, parts=1, currentText="Response", stable=0
+
+ ✓ tests/server/openai-fingerprint.test.ts (4 tests) 368ms
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > clicks direct chat tab and selects model if present on page
+[ArenaDriver] Generation completed! mode=direct parts=1 chars=8
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > falls back to pressing Enter on textarea when send button is not found
+[ArenaDriver] Starting sendMessage with model: claude-3-5-sonnet
+[ArenaDriver] Getting page...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > falls back to pressing Enter on textarea when send button is not found
+[ArenaDriver] Page URL is: about:blank
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > falls back to pressing Enter on textarea when send button is not found
+[ArenaDriver] Preparing direct page: https://arena.ai/text/direct
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > falls back to pressing Enter on textarea when send button is not found
+[ArenaDriver] Finding prompt input...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > falls back to pressing Enter on textarea when send button is not found
+[ArenaDriver] Filled prompt. Finding send button...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > falls back to pressing Enter on textarea when send button is not found
+[ArenaDriver] Pressing enter on prompt input...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > falls back to pressing Enter on textarea when send button is not found
+[ArenaDriver] Entering streamResponse...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > falls back to pressing Enter on textarea when send button is not found
+[ArenaDriver] poll 0 mode=direct: generating=false, sawGenerating=false, parts=1, currentText="Enter response", stable=0
+
+ ✓ tests/server/anthropic-broker.test.ts (13 tests) 1355ms
+   ✓ Anthropic /v1/messages × unified broker (Task 12) > 2. duplicate while RUNNING → 409 denied, no second execution  310ms
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > falls back to pressing Enter on textarea when send button is not found
+[ArenaDriver] Generation completed! mode=direct parts=1 chars=14
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > transmits formatted multi-turn messages into prompt textarea
+[ArenaDriver] Starting sendMessage with model: claude-3-5-sonnet
+[ArenaDriver] Getting page...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > transmits formatted multi-turn messages into prompt textarea
+[ArenaDriver] Page URL is: about:blank
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > transmits formatted multi-turn messages into prompt textarea
+[ArenaDriver] Preparing direct page: https://arena.ai/text/direct
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > transmits formatted multi-turn messages into prompt textarea
+[ArenaDriver] Finding prompt input...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > transmits formatted multi-turn messages into prompt textarea
+[ArenaDriver] Filled prompt. Finding send button...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > transmits formatted multi-turn messages into prompt textarea
+[ArenaDriver] Clicking send button...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > transmits formatted multi-turn messages into prompt textarea
+[ArenaDriver] Entering streamResponse...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > transmits formatted multi-turn messages into prompt textarea
+[ArenaDriver] poll 0 mode=direct: generating=false, sawGenerating=false, parts=1, currentText="Multi-turn response", stable=0
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > transmits formatted multi-turn messages into prompt textarea
+[ArenaDriver] Generation completed! mode=direct parts=1 chars=19
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > uses /text/direct?model= for explicit direct mode targets
+[ArenaDriver] Starting sendMessage with model: arena/direct/gpt-4o
+[ArenaDriver] Getting page...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > uses /text/direct?model= for explicit direct mode targets
+[ArenaDriver] Page URL is: about:blank
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > uses /text/direct?model= for explicit direct mode targets
+[ArenaDriver] Preparing direct page: https://arena.ai/text/direct?model=gpt-4o
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > uses /text/direct?model= for explicit direct mode targets
+[ArenaDriver] Selecting model: gpt-4o
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > uses /text/direct?model= for explicit direct mode targets
+[ArenaDriver] Finding prompt input...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > uses /text/direct?model= for explicit direct mode targets
+[ArenaDriver] Filled prompt. Finding send button...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > uses /text/direct?model= for explicit direct mode targets
+[ArenaDriver] Clicking send button...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > uses /text/direct?model= for explicit direct mode targets
+[ArenaDriver] Entering streamResponse...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > uses /text/direct?model= for explicit direct mode targets
+[ArenaDriver] poll 0 mode=direct: generating=false, sawGenerating=false, parts=1, currentText="ok", stable=0
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > uses /text/direct?model= for explicit direct mode targets
+[ArenaDriver] Generation completed! mode=direct parts=1 chars=2
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to /agent for agent mode targets (best-effort)
+[ArenaDriver] Starting sendMessage with model: agent:claude-3-7-sonnet
+[ArenaDriver] Getting page...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to /agent for agent mode targets (best-effort)
+[ArenaDriver] Page URL is: about:blank
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to /agent for agent mode targets (best-effort)
+[ArenaDriver] Preparing agent page: https://arena.ai/agent
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to /agent for agent mode targets (best-effort)
+[ArenaDriver] Finding prompt input...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to /agent for agent mode targets (best-effort)
+[ArenaDriver] Filled prompt. Finding send button...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to /agent for agent mode targets (best-effort)
+[ArenaDriver] Clicking send button...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to /agent for agent mode targets (best-effort)
+[ArenaDriver] Entering streamResponse...
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to /agent for agent mode targets (best-effort)
+[ArenaDriver] poll 0 mode=agent: generating=false, sawGenerating=false, parts=1, currentText="agent-ok", stable=0
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > navigates to /agent for agent mode targets (best-effort)
+[ArenaDriver] Generation completed! mode=agent parts=1 chars=8
+
+stdout | tests/arena-driver.test.ts > DefaultArenaDriver > sendMessage > rejects side-by-side mode (disabled)
+[ArenaDriver] Starting sendMessage with model: arena/side-by-side/claude-3-7-sonnet+gpt-4o
+
+ ✓ tests/arena-driver.test.ts (28 tests) 234ms
+ ✓ tests/server/anthropic-adapter.test.ts (33 tests) 154ms
+stdout | tests/server.test.ts > Fastify Server (createServer) > POST /v1/chat/completions (Non-streaming) > handles non-streaming request with specified model
+[chat] model=gpt-4o stream=false tools=0 msgs=1
+
+stdout | tests/server.test.ts > Fastify Server (createServer) > POST /v1/chat/completions (Non-streaming) > defaults model to auto if omitted or empty
+[chat] model=auto stream=false tools=0 msgs=1
+
+stdout | tests/server.test.ts > Fastify Server (createServer) > POST /v1/chat/completions (Non-streaming) > returns 500 when driver throws in non-streaming
+[chat] model=gpt-4o stream=false tools=0 msgs=1
+
+stdout | tests/server.test.ts > Fastify Server (createServer) > POST /v1/chat/completions (Streaming) > returns SSE stream with chunks and [DONE]
+[chat] model=gpt-4o stream=true tools=0 msgs=1
+
+stdout | tests/server.test.ts > Fastify Server (createServer) > POST /v1/chat/completions (Streaming) > returns 500 if driver rejects before stream chunks
+[chat] model=gpt-4o stream=true tools=0 msgs=1
+
+stdout | tests/server.test.ts > Fastify Server (createServer) > POST /v1/chat/completions (Streaming) > writes error payload and closes stream if driver fails mid-stream
+[chat] model=gpt-4o stream=true tools=0 msgs=1
+
+stdout | tests/server.test.ts > Fastify Server (createServer) > CORS and Error propagation > propagates custom error statusCode if present on thrown error
+[chat] model=unknown-model stream=false tools=0 msgs=1
+
+stdout | tests/server.test.ts > Fastify Server (createServer) > Request cancellation > passes abort signal to driver sendMessage
+[chat] model=gpt-4o stream=false tools=0 msgs=1
+
+ ✓ tests/server.test.ts (15 tests) 184ms
+ ✓ tests/server/gemini-adapter.test.ts (44 tests) 222ms
+ ✓ tests/ipc/profile-owner-ipc.test.ts (9 tests) 170ms
+stdout | tests/gateway/server-auth-usage.test.ts > gateway server auth/usage/management > rejects /v1 without key and accepts Bearer/x-api-key mac
+[chat] model=claude-web:default stream=false tools=0 msgs=1
+
+stdout | tests/server/unified-broker-helpers.test.ts > beginBrokeredRequest lifecycle (REAL broker, temp store) > pre-send failure (retryable) → claim released → re-issue executes again; post-markSent failure → unconfirmed denied
+[request-broker] WARNING: retryable=true requested AFTER send for 9c02c03f1eac… — upgraded to unconfirmed (override logged)
+
+stdout | tests/gateway/server-auth-usage.test.ts > gateway server auth/usage/management > toggles gateway service state and responds 503 when service is stopped
+[chat] model=claude-web:default stream=false tools=0 msgs=1
+
+ ✓ tests/server/unified-broker-helpers.test.ts (15 tests) 113ms
+ ✓ tests/gateway/server-auth-usage.test.ts (4 tests) 141ms
+ ✓ tests/browser/tab-scheduler.test.ts (7 tests) 127ms
+stdout | tests/sessions/session-isolation.test.ts > session isolation (Task 4 semantics) > TWO DIFFERENT explicit headers with IDENTICAL messages = TWO DIFFERENT sessions
+[chat] model=claude-web:default stream=false tools=0 msgs=2
+
+stdout | tests/sessions/session-isolation.test.ts > session isolation (Task 4 semantics) > TWO DIFFERENT explicit headers with IDENTICAL messages = TWO DIFFERENT sessions
+[chat] model=claude-web:default stream=false tools=0 msgs=2
+
+stdout | tests/sessions/session-isolation.test.ts > session isolation (Task 4 semantics) > an explicit header ALWAYS beats the fingerprint (same header → same key)
+[chat] model=claude-web:default stream=false tools=0 msgs=2
+
+stdout | tests/sessions/session-isolation.test.ts > session isolation (Task 4 semantics) > an explicit header ALWAYS beats the fingerprint (same header → same key)
+[chat] model=claude-web:default stream=false tools=0 msgs=2
+
+stdout | tests/sessions/session-isolation.test.ts > session isolation (Task 4 semantics) > NO header → stable fingerprint: identical messages reuse ONE key
+[chat] model=claude-web:default stream=false tools=0 msgs=2
+
+stdout | tests/sessions/session-isolation.test.ts > session isolation (Task 4 semantics) > NO header → stable fingerprint: identical messages reuse ONE key
+[chat] model=claude-web:default stream=false tools=0 msgs=2
+
+stdout | tests/sessions/session-isolation.test.ts > session isolation (Task 4 semantics) > NO header → different first user message → different fingerprint
+[chat] model=claude-web:default stream=false tools=0 msgs=2
+
+stdout | tests/sessions/session-isolation.test.ts > session isolation (Task 4 semantics) > NO header → different first user message → different fingerprint
+[chat] model=claude-web:default stream=false tools=0 msgs=2
+
+stdout | tests/sessions/session-isolation.test.ts > session isolation (Task 4 semantics) > metadata.session_id is used when the header is absent
+[chat] model=claude-web:default stream=false tools=0 msgs=2
+
+ ✓ tests/sessions/session-isolation.test.ts (7 tests) 126ms
+ ✓ tests/gateway/provider-manager.test.ts (13 tests) 124ms
+stdout | tests/protocol/broker-execution-attachment.test.ts > attachForExecution (atomic one-time reservation) > attachment controller refuses state updates with a WRONG identity/token (documented, logged, no-op)
+[request-broker] WARNING: state update REFUSED for 2ad3d83313c8… — executor identity/execution-token mismatch (possible duplicate or forged controller); no-op.
+
+stdout | tests/protocol/broker-execution-attachment.test.ts > attachForExecution (atomic one-time reservation) > controller markSent sets sentAt durably; fail after sent upgrades to unconfirmed even with retryable:true
+[request-broker] WARNING: retryable=true requested AFTER send for dd3fbd0d031f… — upgraded to unconfirmed (override logged)
+
+ ✓ tests/protocol/broker-execution-attachment.test.ts (11 tests) 148ms
+ ✓ tests/sessions/session-queue.test.ts (4 tests) 140ms
+ ✓ tests/sessions/session-registry.test.ts (8 tests) 77ms
+ ✓ tests/server/session-plumbing.test.ts (6 tests) 291ms
+ ✓ tests/ipc/profile-owner-ipc-matrix.test.ts (10 tests) 4761ms
+   ✓ Task 11 child-process matrix (14 items) > items 1-5: receiver routes to the owner; execution happens ONLY at the owner; result returns to the client  356ms
+   ✓ Task 11 child-process matrix (14 items) > item 6: two concurrent requests from DIFFERENT gateways to the SAME session are serialized at the owner  363ms
+   ✓ Task 11 child-process matrix (14 items) > item 7: two DIFFERENT sessions run in parallel (overlapping execution windows)  1139ms
+   ✓ Task 11 child-process matrix (14 items) > item 9: owner dies BEFORE send → durable failed(retryable), then a safe retry succeeds  522ms
+   ✓ Task 11 child-process matrix (14 items) > item 10: owner dies AFTER send → durable unconfirmed; duplicate request is refused (never re-executed)  330ms
+   ✓ Task 11 child-process matrix (14 items) > item 11: live owner with STALE heartbeat → claim refused busy with staleHeartbeat flag; routing still works (Task 9 rule intact)  462ms
+   ✓ Task 11 child-process matrix (14 items) > item 12: STALE epoch (owner re-incarnated) → command refused, no execution  351ms
+   ✓ Task 11 child-process matrix (14 items) > item 13: ownership recovery after PROVEN death → claim stolen by the new process  564ms
+   ✓ Task 11 child-process matrix (14 items) > item 14: re-sending the same command → execution happened EXACTLY once; duplicate replayed from the durable result  367ms
+ ✓ tests/ipc/profile-owner-router.test.ts (6 tests) 58ms
+ ✓ tests/gateway/api-keys.test.ts (2 tests) 89ms
+ ✓ tests/gateway/config-store.test.ts (4 tests) 20ms
+ ✓ tests/gateway/new-web-providers.test.ts (5 tests) 17ms
+ ✓ tests/gateway/auth-and-lifecycle.test.ts (6 tests) 32ms
+ ✓ tests/browser-manager.test.ts (16 tests) 86ms
+ ✓ tests/sessions/ownership-ledger-ipc.test.ts (4 tests) 13ms
+stdout | tests/zai-driver.test.ts > RoutingDriver > falls back to the next matching route when the first fails
+[RoutingDriver] zai-api failed for model glm-5.3-flash: should not be called on zaiApi. Trying next provider...
+
+stdout | tests/zai-driver.test.ts > RoutingDriver > throws the last error when every matching route fails
+[RoutingDriver] zai-api failed for model glm-5.3-flash: should not be called on zaiApi. Trying next provider...
+
+stdout | tests/zai-driver.test.ts > RoutingDriver > throws the last error when every matching route fails
+[RoutingDriver] arena failed for model glm-5.3-flash: arena boom. Trying next provider...
+
+ ✓ tests/zai-driver.test.ts (22 tests) 13ms
+ ✓ tests/server/tool-interpreter.test.ts (6 tests) 4ms
+ ✓ tests/openai-formatter.test.ts (9 tests) 3ms
+ ✓ tests/config.test.ts (6 tests) 8ms
+ ✓ tests/server/swarm-coordinator.test.ts (4 tests) 7ms
+stdout | tests/tab-worker-pool.test.ts > TabWorkerPool > triggers auto-compaction and session reset when turn count exceeds threshold
+[TabWorkerPool] Auto-compacting tab #tab-1 (turn count: 2). Resetting session.
+
+ ✓ tests/tab-worker-pool.test.ts (4 tests) 3ms
+ ✓ tests/sessions/durable-store.test.ts (4 tests) 5ms
+stdout | tests/arena/driver-capabilities.test.ts > driver capabilities declarations (Task 13) > standalone drivers ACCEPT sessionKey (no silent ignore): it reaches the serialized layer
+[ZaiWeb] session=sess-A
+
+stdout | tests/arena/driver-capabilities.test.ts > driver capabilities declarations (Task 13) > standalone drivers ACCEPT sessionKey (no silent ignore): it reaches the serialized layer
+[QwenWeb] session=sess-A
+
+stdout | tests/arena/driver-capabilities.test.ts > driver capabilities declarations (Task 13) > standalone drivers ACCEPT sessionKey (no silent ignore): it reaches the serialized layer
+[GeminiWeb] session=sess-A
+
+stdout | tests/arena/driver-capabilities.test.ts > driver capabilities declarations (Task 13) > standalone drivers ACCEPT sessionKey (no silent ignore): it reaches the serialized layer
+[ClaudeWeb] session=sess-A
+
+stdout | tests/arena/driver-capabilities.test.ts > driver capabilities declarations (Task 13) > SerializedSessionSendQueue: same session serializes; different sessions ALSO serialize (one shared page); results/errors propagate
+[log] session=sess-1
+
+stdout | tests/arena/driver-capabilities.test.ts > driver capabilities declarations (Task 13) > SerializedSessionSendQueue: same session serializes; different sessions ALSO serialize (one shared page); results/errors propagate
+[log] session=sess-2
+
+stdout | tests/arena/driver-capabilities.test.ts > driver capabilities declarations (Task 13) > SerializedSessionSendQueue: same session serializes; different sessions ALSO serialize (one shared page); results/errors propagate
+[log] session=sess-1
+
+stdout | tests/arena/driver-capabilities.test.ts > driver capabilities declarations (Task 13) > SerializedSessionSendQueue: same session serializes; different sessions ALSO serialize (one shared page); results/errors propagate
+[log] session=s
+
+stdout | tests/arena/driver-capabilities.test.ts > driver capabilities declarations (Task 13) > SerializedSessionSendQueue: same session serializes; different sessions ALSO serialize (one shared page); results/errors propagate
+[log] session=s
+
+ ✓ tests/arena/driver-capabilities.test.ts (4 tests) 41ms
+ ✓ tests/gateway/security-redaction.test.ts (2 tests) 4ms
+ ✓ tests/gateway/usage-tracker.test.ts (6 tests) 8ms
+ ✓ tests/browser/browser-owner.test.ts (4 tests) 2ms
+ ↓ tests/live-zai.test.ts (2 tests | 2 skipped)
+ ✓ tests/gateway/multi-account.test.ts (1 test) 35ms
+ ✓ tests/cli.test.ts (12 tests) 16ms
+
+ Test Files  47 passed | 1 skipped (48)
+      Tests  437 passed | 2 skipped (439)
+   Start at  06:21:39
+   Duration  6.53s (transform 1.63s, setup 0ms, collect 10.18s, tests 22.45s, environment 8ms, prepare 2.89s)
+

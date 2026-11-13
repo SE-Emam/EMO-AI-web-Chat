@@ -1,5 +1,6 @@
 import { chromium, type BrowserContext, type Locator, type Page } from 'playwright';
 import type { ArenaDriver, ChatMessage, ClaudeWebConfig } from '../types.js';
+import { cleanupStaleProfileLocks } from '../browser/manager.js';
 import { formatMessages } from './models.js';
 import { DEFAULT_CLAUDE_WEB_BASE_URL } from '../config.js';
 
@@ -18,40 +19,64 @@ const ASSISTANT_PROSE = `${ASSISTANT_MSG} .prose`;
  *     claude-web:<model>  or  claudeai:<model>
  *   `claude-web:default` keeps the session's current model.
  */
+export const CLAUDE_WEB_CANONICAL_MODELS: readonly string[] = [
+  'claude-web:default',
+  'claude-web:claude-3-7-sonnet',
+  'claude-web:claude-3-5-sonnet',
+  'claude-web:claude-3-5-haiku',
+  'claude-web:claude-3-opus',
+];
+
+import { SerializedSessionSendQueue, STANDALONE_SERIALIZED_NOTES, type DriverCapabilities } from './driver-capabilities.js';
+
 export class ClaudeWebDriver implements ArenaDriver {
   private readonly config: ClaudeWebConfig;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
-  /** Serializes requests — a single browser page cannot serve concurrent chats safely. */
-  private queue: Promise<void> = Promise.resolve();
+  /** Task 13 — declared serialized session lane (single shared page → global serialization). */
+  private readonly sendQueue = new SerializedSessionSendQueue();
 
   constructor(config: ClaudeWebConfig) {
     this.config = config;
   }
 
   async listModels(): Promise<string[]> {
-    return ['claude-web:default'];
+    return [...CLAUDE_WEB_CANONICAL_MODELS];
   }
 
   async sendMessage(
     model: string,
     messages: ChatMessage[],
     onChunk?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    sessionKey = 'default'
   ): Promise<string> {
-    const run = this.queue.then(() => this.sendMessageSerialized(model, messages, onChunk, signal));
-    this.queue = run.then(
-      () => undefined,
-      () => undefined
+    return this.sendQueue.run('ClaudeWeb', sessionKey, () =>
+      this.sendMessageSerialized(model, messages, onChunk, signal, sessionKey)
     );
-    return run;
+  }
+
+  getCapabilities(): DriverCapabilities {
+    return {
+      sessionSupport: 'serialized-per-session',
+      persistentConversation: false,
+      streaming: true,
+      toolCalling: false,
+      notes: STANDALONE_SERIALIZED_NOTES,
+    };
+  }
+
+  /** Task 14 — breaker key half: the durable profile this driver runs against. */
+  getProfileDir(): string {
+    return this.config.userDataDir;
   }
 
   private async sendMessageSerialized(
     model: string,
     messages: ChatMessage[],
     onChunk?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    _sessionKey = 'default'
   ): Promise<string> {
     if (signal?.aborted) throw new Error('Request was aborted');
     const page = await this.ensurePage();
@@ -67,10 +92,17 @@ export class ClaudeWebDriver implements ArenaDriver {
     await this.selectModelIfRequested(page, model, signal);
 
     const prompt = formatMessages(messages);
+    const beforeCount = await page.locator(ASSISTANT_MSG).count().catch(() => 0);
     await this.fillComposer(page, prompt, signal);
     await this.clickSend(page, signal);
 
-    return await this.waitForResponse(page, onChunk, signal);
+    const result = await this.waitForResponse(page, onChunk, signal, beforeCount);
+
+    if (this.config.privacyMode) {
+      await this.cleanupPrivacySession(page).catch(() => {});
+    }
+
+    return result;
   }
 
   private async assertAuthenticated(page: Page): Promise<void> {
@@ -174,7 +206,8 @@ export class ClaudeWebDriver implements ArenaDriver {
   private async waitForResponse(
     page: Page,
     onChunk?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    beforeCount = 0
   ): Promise<string> {
     const timeoutMs = this.config.timeoutMs ?? 300_000;
     const deadline = Date.now() + timeoutMs;
@@ -196,10 +229,15 @@ export class ClaudeWebDriver implements ArenaDriver {
         return { count: msgs.length, text, streaming, hasStop: !!stop, url: location.href };
       }, { msg: ASSISTANT_MSG }).catch(() => ({ count: 0, text: '', streaming: false, hasStop: false, url: '' }));
 
-      if (snapshot.count > 0) sawAssistant = true;
-      const cleaned = this.extractAssistantText([snapshot.text]);
+      if (snapshot.count <= beforeCount && !snapshot.text) continue;
+      if (snapshot.count > beforeCount || (beforeCount === 0 && snapshot.count > 0)) sawAssistant = true;
+      const cleaned = sawAssistant ? this.extractAssistantText([snapshot.text]) : '';
       if (cleaned && cleaned !== lastEmitted) {
-        const delta = cleaned.startsWith(lastEmitted) ? cleaned.slice(lastEmitted.length) : cleaned;
+        const delta = cleaned.startsWith(lastEmitted)
+          ? cleaned.slice(lastEmitted.length)
+          : !lastEmitted
+            ? cleaned
+            : '';
         if (delta) {
           try { onChunk?.(delta); } catch { /* ignore sink errors */ }
         }
@@ -225,6 +263,26 @@ export class ClaudeWebDriver implements ArenaDriver {
     );
   }
 
+  private async cleanupPrivacySession(page: Page): Promise<void> {
+    try {
+      console.log('[ClaudeWeb] Privacy Mode: clearing conversation...');
+      const menuBtn = page.locator('button[aria-label="Chat menu"], button[aria-label*="options"], button[data-testid="chat-menu-trigger"]').first();
+      if ((await menuBtn.count().catch(() => 0)) > 0 && (await menuBtn.isVisible().catch(() => false))) {
+        await menuBtn.click({ timeout: 2000 }).catch(() => {});
+        await page.waitForTimeout(300);
+        const delBtn = page.locator('[role="menuitem"]:has-text("Delete"), button:has-text("Delete")').first();
+        if ((await delBtn.count().catch(() => 0)) > 0 && (await delBtn.isVisible().catch(() => false))) {
+          await delBtn.click({ timeout: 2000 }).catch(() => {});
+          await page.waitForTimeout(300);
+          const confirmBtn = page.locator('button:has-text("Delete")').last();
+          await confirmBtn.click({ timeout: 2000 }).catch(() => {});
+        }
+      }
+      const base = (this.config.baseUrl || DEFAULT_CLAUDE_WEB_BASE_URL).replace(/\/$/, '');
+      await page.goto(`${base}/new`, { waitUntil: 'commit', timeout: 5000 }).catch(() => {});
+    } catch {}
+  }
+
   async close(): Promise<void> {
     try {
       await this.context?.close();
@@ -236,15 +294,36 @@ export class ClaudeWebDriver implements ArenaDriver {
   }
 
   private async ensurePage(): Promise<Page> {
-    if (this.page && !this.page.isClosed()) return this.page;
+    if (this.context && this.page && !this.page.isClosed()) {
+      try {
+        this.context.pages();
+        return this.page;
+      } catch {
+        this.context = null;
+        this.page = null;
+      }
+    }
     if (!this.context) {
-      console.log(`[ClaudeWeb] Launching persistent Chrome (headless=${this.config.headless})...`);
-      this.context = await chromium.launchPersistentContext(this.config.userDataDir, {
-        channel: 'chrome',
-        headless: this.config.headless,
+      console.log(`[ClaudeWeb] Launching persistent browser (headless=${this.config.headless !== false})...`);
+      cleanupStaleProfileLocks(this.config.userDataDir);
+      const baseOptions: Record<string, unknown> = {
+        headless: this.config.headless !== false,
         viewport: { width: 1280, height: 900 },
         args: ['--disable-blink-features=AutomationControlled'],
         ignoreDefaultArgs: ['--enable-automation'],
+      };
+      let ctx: BrowserContext;
+      try {
+        ctx = await chromium.launchPersistentContext(this.config.userDataDir, { ...baseOptions, channel: 'chrome' });
+      } catch {
+        ctx = await chromium.launchPersistentContext(this.config.userDataDir, baseOptions);
+      }
+      this.context = ctx;
+      ctx.once?.('close', () => {
+        if (this.context === ctx) {
+          this.context = null;
+          this.page = null;
+        }
       });
     }
     const pages = this.context.pages();

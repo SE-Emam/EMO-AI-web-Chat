@@ -1,5 +1,6 @@
 import { chromium, type BrowserContext, type Page } from 'playwright';
 import type { ArenaDriver, ChatMessage, GeminiWebConfig } from '../types.js';
+import { cleanupStaleProfileLocks } from '../browser/manager.js';
 import { formatMessages } from './models.js';
 import { DEFAULT_GEMINI_WEB_BASE_URL } from '../config.js';
 
@@ -19,40 +20,64 @@ const MODEL_CONTENT = 'model-response message-content, model-response .model-res
  *     gemini-web:<model>  or  geminiweb:<model>
  *   `gemini-web:default` keeps the session's current model.
  */
+export const GEMINI_WEB_CANONICAL_MODELS: readonly string[] = [
+  'gemini-web:default',
+  'gemini-web:gemini-auto',
+  'gemini-web:gemini-2.0-flash',
+  'gemini-web:gemini-1.5-pro',
+  'gemini-web:gemini-1.5-flash',
+];
+
+import { SerializedSessionSendQueue, STANDALONE_SERIALIZED_NOTES, type DriverCapabilities } from './driver-capabilities.js';
+
 export class GeminiWebDriver implements ArenaDriver {
   private readonly config: GeminiWebConfig;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
-  /** Serializes requests — a single browser page cannot serve concurrent chats safely. */
-  private queue: Promise<void> = Promise.resolve();
+  /** Task 13 — declared serialized session lane (single shared page → global serialization). */
+  private readonly sendQueue = new SerializedSessionSendQueue();
 
   constructor(config: GeminiWebConfig) {
     this.config = config;
   }
 
   async listModels(): Promise<string[]> {
-    return ['gemini-web:default'];
+    return [...GEMINI_WEB_CANONICAL_MODELS];
   }
 
   async sendMessage(
     model: string,
     messages: ChatMessage[],
     onChunk?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    sessionKey = 'default'
   ): Promise<string> {
-    const run = this.queue.then(() => this.sendMessageSerialized(model, messages, onChunk, signal));
-    this.queue = run.then(
-      () => undefined,
-      () => undefined
+    return this.sendQueue.run('GeminiWeb', sessionKey, () =>
+      this.sendMessageSerialized(model, messages, onChunk, signal, sessionKey)
     );
-    return run;
+  }
+
+  getCapabilities(): DriverCapabilities {
+    return {
+      sessionSupport: 'serialized-per-session',
+      persistentConversation: false,
+      streaming: true,
+      toolCalling: false,
+      notes: STANDALONE_SERIALIZED_NOTES,
+    };
+  }
+
+  /** Task 14 — breaker key half: the durable profile this driver runs against. */
+  getProfileDir(): string {
+    return this.config.userDataDir;
   }
 
   private async sendMessageSerialized(
     model: string,
     messages: ChatMessage[],
     onChunk?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    _sessionKey = 'default'
   ): Promise<string> {
     if (signal?.aborted) throw new Error('Request was aborted');
     const page = await this.ensurePage();
@@ -196,7 +221,11 @@ export class GeminiWebDriver implements ArenaDriver {
       if (snap.count <= beforeCount && !snap.text) continue;
       const cleaned = this.cleanText(snap.text);
       if (cleaned && cleaned !== lastEmitted) {
-        const delta = cleaned.startsWith(lastEmitted) ? cleaned.slice(lastEmitted.length) : cleaned;
+        const delta = cleaned.startsWith(lastEmitted)
+          ? cleaned.slice(lastEmitted.length)
+          : !lastEmitted
+            ? cleaned
+            : '';
         if (delta) {
           try { onChunk?.(delta); } catch { /* ignore */ }
         }
@@ -227,15 +256,36 @@ export class GeminiWebDriver implements ArenaDriver {
   }
 
   private async ensurePage(): Promise<Page> {
-    if (this.page && !this.page.isClosed()) return this.page;
+    if (this.context && this.page && !this.page.isClosed()) {
+      try {
+        this.context.pages();
+        return this.page;
+      } catch {
+        this.context = null;
+        this.page = null;
+      }
+    }
     if (!this.context) {
-      console.log(`[GeminiWeb] Launching persistent Chrome (headless=${this.config.headless})...`);
-      this.context = await chromium.launchPersistentContext(this.config.userDataDir, {
-        channel: 'chrome',
-        headless: this.config.headless,
+      console.log(`[GeminiWeb] Launching persistent browser (headless=${this.config.headless !== false})...`);
+      cleanupStaleProfileLocks(this.config.userDataDir);
+      const baseOptions: Record<string, unknown> = {
+        headless: this.config.headless !== false,
         viewport: { width: 1280, height: 900 },
         args: ['--disable-blink-features=AutomationControlled'],
         ignoreDefaultArgs: ['--enable-automation'],
+      };
+      let ctx: BrowserContext;
+      try {
+        ctx = await chromium.launchPersistentContext(this.config.userDataDir, { ...baseOptions, channel: 'chrome' });
+      } catch {
+        ctx = await chromium.launchPersistentContext(this.config.userDataDir, baseOptions);
+      }
+      this.context = ctx;
+      ctx.once?.('close', () => {
+        if (this.context === ctx) {
+          this.context = null;
+          this.page = null;
+        }
       });
     }
     const pages = this.context.pages();

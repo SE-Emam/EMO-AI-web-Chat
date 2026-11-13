@@ -1,8 +1,10 @@
 import { chromium, type BrowserContext, type Page } from 'playwright';
 import type { ArenaDriver, ChatMessage, ZaiWebConfig } from '../types.js';
+import { cleanupStaleProfileLocks } from '../browser/manager.js';
 import { formatMessages } from './models.js';
 import { ZaiDriver } from './zai-driver.js';
 import { DEFAULT_ZAI_WEB_BASE_URL } from '../config.js';
+import { SerializedSessionSendQueue, STANDALONE_SERIALIZED_NOTES, type DriverCapabilities } from './driver-capabilities.js';
 
 /** Assistant-message containers used by the chat.z.ai (Svelte) UI. */
 const ASSISTANT_QUERY = '.chat-assistant';
@@ -22,8 +24,13 @@ export class ZaiWebDriver implements ArenaDriver {
   private readonly config: ZaiWebConfig;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
-  /** Serializes requests — a single browser page cannot serve concurrent chats. */
-  private queue: Promise<void> = Promise.resolve();
+  /**
+   * Task 13 — declared serialized session lane. A single browser page cannot
+   * serve concurrent chats: same-session AND cross-session requests
+   * serialize (the sessionKey is accepted and logged, never silently
+   * dropped — declared in getCapabilities()).
+   */
+  private readonly sendQueue = new SerializedSessionSendQueue();
 
   constructor(config: ZaiWebConfig) {
     this.config = config;
@@ -31,29 +38,42 @@ export class ZaiWebDriver implements ArenaDriver {
 
   async listModels(): Promise<string[]> {
     // Models exposed by chat.z.ai web UI (verified via model picker)
-    return ['glm-5.3-flash', 'glm-5.3', 'glm-5.2'];
+    return ['zai-web:default', 'glm-4.5-flash', 'glm-5.3-flash', 'glm-5.3', 'glm-5.2', 'glm-4.7-flash'];
   }
 
   async sendMessage(
     model: string,
     messages: ChatMessage[],
     onChunk?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    sessionKey = 'default'
   ): Promise<string> {
-    // Serialize: concurrent requests would fight over the same page/input.
-    const run = this.queue.then(() => this.sendMessageSerialized(model, messages, onChunk, signal));
-    this.queue = run.then(
-      () => undefined,
-      () => undefined
+    return this.sendQueue.run('ZaiWeb', sessionKey, () =>
+      this.sendMessageSerialized(model, messages, onChunk, signal, sessionKey)
     );
-    return run;
+  }
+
+  getCapabilities(): DriverCapabilities {
+    return {
+      sessionSupport: 'serialized-per-session',
+      persistentConversation: false,
+      streaming: true,
+      toolCalling: false,
+      notes: STANDALONE_SERIALIZED_NOTES,
+    };
+  }
+
+  /** Task 14 — breaker key half: the durable profile this driver runs against. */
+  getProfileDir(): string {
+    return this.config.userDataDir;
   }
 
   private async sendMessageSerialized(
     model: string,
     messages: ChatMessage[],
     onChunk?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    _sessionKey = 'default'
   ): Promise<string> {
     if (signal?.aborted) throw new Error('Request was aborted');
     const page = await this.ensurePage(signal);
@@ -190,18 +210,37 @@ export class ZaiWebDriver implements ArenaDriver {
   // Browser context management (mirrors BrowserManager's anti-detection approach)
   // -----
   private async ensurePage(signal?: AbortSignal): Promise<Page> {
-    if (this.page && !this.page.isClosed()) {
-      return this.page;
+    if (this.context && this.page && !this.page.isClosed()) {
+      try {
+        this.context.pages();
+        return this.page;
+      } catch {
+        this.context = null;
+        this.page = null;
+      }
     }
 
     if (!this.context) {
-      console.log(`[ZaiWeb] Launching persistent Chrome (headless=${this.config.headless})...`);
-      this.context = await chromium.launchPersistentContext(this.config.userDataDir, {
-        channel: 'chrome',
-        headless: this.config.headless,
+      console.log(`[ZaiWeb] Launching persistent browser (headless=${this.config.headless !== false})...`);
+      cleanupStaleProfileLocks(this.config.userDataDir);
+      const baseOptions: Record<string, unknown> = {
+        headless: this.config.headless !== false,
         viewport: { width: 1280, height: 800 },
         args: ['--disable-blink-features=AutomationControlled'],
         ignoreDefaultArgs: ['--enable-automation'],
+      };
+      let ctx: BrowserContext;
+      try {
+        ctx = await chromium.launchPersistentContext(this.config.userDataDir, { ...baseOptions, channel: 'chrome' });
+      } catch {
+        ctx = await chromium.launchPersistentContext(this.config.userDataDir, baseOptions);
+      }
+      this.context = ctx;
+      ctx.once?.('close', () => {
+        if (this.context === ctx) {
+          this.context = null;
+          this.page = null;
+        }
       });
     }
 

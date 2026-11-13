@@ -1,7 +1,57 @@
 import { describe, it, expect } from 'vitest';
 import { UsageTracker } from '../../src/gateway/usage-tracker.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 describe('UsageTracker', () => {
+  it('logs a request at arrival as in flight and stamps it on completion', () => {
+    let now = 1_700_000_000_000;
+    const t = new UsageTracker({ heartbeatTimeoutMs: 5000, now: () => now });
+    let changes = 0;
+    t.onUsageChange(() => { changes += 1; });
+
+    t.recordRequestStart({ id: 'r1', model: 'm', stream: false, promptChars: 8, clientAgent: 'Cursor' });
+    const inFlight = t.getRecentRequests();
+    expect(inFlight).toHaveLength(1);
+    expect(inFlight[0].id).toBe('r1');
+    // undefined means "in flight right now" (JSON drops the key entirely)
+    expect(inFlight[0].ok).toBeUndefined();
+    expect(inFlight[0].clientAgent).toBe('Cursor');
+    const arrivedAt = inFlight[0].timestamp;
+
+    now += 4200;
+    t.recordRequestEnd({ id: 'r1', ok: true, completionChars: 16 });
+    const done = t.getRecentRequests();
+    expect(done).toHaveLength(1);
+    expect(done[0].ok).toBe(true);
+    expect(done[0].durationMs).toBe(4200);
+    // truth: the entry keeps the moment the request actually arrived
+    expect(done[0].timestamp).toBe(arrivedAt);
+    expect(changes).toBe(2);
+  });
+
+  it('marks persisted in-flight entries as interrupted when the gateway restarts', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'emo-tracker-'));
+    const persistPath = path.join(dir, 'recent.json');
+    try {
+      fs.writeFileSync(persistPath, JSON.stringify({
+        entries: [{
+          id: 'r-old', timestamp: new Date().toISOString(), timeStr: '00:00:00',
+          model: 'm', stream: false, promptChars: 1, completionChars: 0,
+          tokensEstimated: 1, durationMs: 0, clientAgent: 'Cursor',
+        }],
+      }));
+      const t = new UsageTracker({ heartbeatTimeoutMs: 5000, persistPath });
+      const restored = t.getRecentRequests();
+      expect(restored).toHaveLength(1);
+      expect(restored[0].ok).toBe(false);
+      expect(restored[0].error).toBe('interrupted by gateway restart');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('records lifetime and session counters', () => {
     let now = 1000;
     const t = new UsageTracker({ heartbeatTimeoutMs: 5000, now: () => now });

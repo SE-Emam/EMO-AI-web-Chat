@@ -1,5 +1,6 @@
 import { chromium, type BrowserContext, type Page } from 'playwright';
 import type { ArenaDriver, ChatMessage, QwenWebConfig } from '../types.js';
+import { cleanupStaleProfileLocks } from '../browser/manager.js';
 import { formatMessages } from './models.js';
 import { DEFAULT_QWEN_WEB_BASE_URL } from '../config.js';
 
@@ -18,40 +19,64 @@ const ANSWER = '.response-message-content.phase-answer, .response-message-conten
  *     qwen-web:<model>  or  qwenweb:<model>
  *   `qwen-web:default` keeps the session's current model.
  */
+export const QWEN_WEB_CANONICAL_MODELS: readonly string[] = [
+  'qwen-web:default',
+  'qwen-web:qwen-3.7-plus',
+  'qwen-web:qwen-2.5-max',
+  'qwen-web:qwen-2.5-plus',
+  'qwen-web:qwen-2.5-coder-32b',
+];
+
+import { SerializedSessionSendQueue, STANDALONE_SERIALIZED_NOTES, type DriverCapabilities } from './driver-capabilities.js';
+
 export class QwenWebDriver implements ArenaDriver {
   private readonly config: QwenWebConfig;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
-  /** Serializes requests — a single browser page cannot serve concurrent chats safely. */
-  private queue: Promise<void> = Promise.resolve();
+  /** Task 13 — declared serialized session lane (single shared page → global serialization). */
+  private readonly sendQueue = new SerializedSessionSendQueue();
 
   constructor(config: QwenWebConfig) {
     this.config = config;
   }
 
   async listModels(): Promise<string[]> {
-    return ['qwen-web:default'];
+    return [...QWEN_WEB_CANONICAL_MODELS];
   }
 
   async sendMessage(
     model: string,
     messages: ChatMessage[],
     onChunk?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    sessionKey = 'default'
   ): Promise<string> {
-    const run = this.queue.then(() => this.sendMessageSerialized(model, messages, onChunk, signal));
-    this.queue = run.then(
-      () => undefined,
-      () => undefined
+    return this.sendQueue.run('QwenWeb', sessionKey, () =>
+      this.sendMessageSerialized(model, messages, onChunk, signal, sessionKey)
     );
-    return run;
+  }
+
+  getCapabilities(): DriverCapabilities {
+    return {
+      sessionSupport: 'serialized-per-session',
+      persistentConversation: false,
+      streaming: true,
+      toolCalling: false,
+      notes: STANDALONE_SERIALIZED_NOTES,
+    };
+  }
+
+  /** Task 14 — breaker key half: the durable profile this driver runs against. */
+  getProfileDir(): string {
+    return this.config.userDataDir;
   }
 
   private async sendMessageSerialized(
     model: string,
     messages: ChatMessage[],
     onChunk?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    _sessionKey = 'default'
   ): Promise<string> {
     if (signal?.aborted) throw new Error('Request was aborted');
     const page = await this.ensurePage();
@@ -168,7 +193,11 @@ export class QwenWebDriver implements ArenaDriver {
         cleaned = '';
       }
       if (cleaned && cleaned !== lastEmitted) {
-        const delta = cleaned.startsWith(lastEmitted) ? cleaned.slice(lastEmitted.length) : cleaned;
+        const delta = cleaned.startsWith(lastEmitted)
+          ? cleaned.slice(lastEmitted.length)
+          : !lastEmitted
+            ? cleaned
+            : '';
         if (delta) {
           try { onChunk?.(delta); } catch { /* ignore */ }
         }
@@ -199,15 +228,36 @@ export class QwenWebDriver implements ArenaDriver {
   }
 
   private async ensurePage(): Promise<Page> {
-    if (this.page && !this.page.isClosed()) return this.page;
+    if (this.context && this.page && !this.page.isClosed()) {
+      try {
+        this.context.pages();
+        return this.page;
+      } catch {
+        this.context = null;
+        this.page = null;
+      }
+    }
     if (!this.context) {
-      console.log(`[QwenWeb] Launching persistent Chrome (headless=${this.config.headless})...`);
-      this.context = await chromium.launchPersistentContext(this.config.userDataDir, {
-        channel: 'chrome',
-        headless: this.config.headless,
+      console.log(`[QwenWeb] Launching persistent browser (headless=${this.config.headless !== false})...`);
+      cleanupStaleProfileLocks(this.config.userDataDir);
+      const baseOptions: Record<string, unknown> = {
+        headless: this.config.headless !== false,
         viewport: { width: 1280, height: 900 },
         args: ['--disable-blink-features=AutomationControlled'],
         ignoreDefaultArgs: ['--enable-automation'],
+      };
+      let ctx: BrowserContext;
+      try {
+        ctx = await chromium.launchPersistentContext(this.config.userDataDir, { ...baseOptions, channel: 'chrome' });
+      } catch {
+        ctx = await chromium.launchPersistentContext(this.config.userDataDir, baseOptions);
+      }
+      this.context = ctx;
+      ctx.once?.('close', () => {
+        if (this.context === ctx) {
+          this.context = null;
+          this.page = null;
+        }
       });
     }
     const pages = this.context.pages();

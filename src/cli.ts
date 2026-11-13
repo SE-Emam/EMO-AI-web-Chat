@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
@@ -11,7 +12,10 @@ import { BrowserManager } from './browser/manager.js';
 import { DefaultArenaDriver } from './arena/driver.js';
 import { ZaiDriver } from './arena/zai-driver.js';
 import { RoutingDriver, type DriverRoute } from './arena/routing-driver.js';
+import { BreakerRegistry } from './arena/circuit-breaker.js';
+import { getGlobalResilienceRegistry } from './arena/provider-failures.js';
 import { createServer } from './server/app.js';
+import { closeServerGracefully } from './server/graceful-shutdown.js';
 import { KNOWN_ARENA_MODELS } from './arena/models.js';
 import type { ArenaDriver, Config } from './types.js';
 import { ZAI_MODELS } from './arena/zai-models.js';
@@ -20,6 +24,7 @@ import { ClaudeWebDriver } from './arena/claude-web-driver.js';
 import { TencentAiWebDriver } from './arena/tencent-ai-web-driver.js';
 import { GeminiWebDriver } from './arena/gemini-web-driver.js';
 import { QwenWebDriver } from './arena/qwen-web-driver.js';
+import { SwarmCoordinator } from './server/swarm-coordinator.js';
 
 export interface ProfileStatus {
   userDataDir: string;
@@ -237,7 +242,25 @@ export function createCli(services: CliServices = {}): Command {
       }
       routes.push({ name: 'arena-browser', driver: arenaDriver, matches: (m) => matchesProvider('arena-browser', m) });
 
-      let driver: ArenaDriver = new RoutingDriver(routes);
+      // Task 14 — provider resilience wiring: per-(route,profileDir) circuit
+      // breakers over ONE durable store (shared across gateway processes) and
+      // the process-local last-failure/success registry for /health. The
+      // state file is only WRITTEN when countable failures occur — reads
+      // never create it, so idle gateways leave the state directory alone.
+      const resilienceThreshold = Number(process.env.EMO_BREAKER_THRESHOLD || '') > 0
+        ? Number(process.env.EMO_BREAKER_THRESHOLD)
+        : 5;
+      const resilienceRecoveryMs = Number(process.env.EMO_BREAKER_RECOVERY_MS || '') > 0
+        ? Number(process.env.EMO_BREAKER_RECOVERY_MS)
+        : 30_000;
+      const breakerStorePath = process.env.EMO_BREAKER_STATE_PATH
+        || path.join(os.homedir(), '.arena-webbridge', 'state', 'breaker-state.json');
+      const breakers = new BreakerRegistry(breakerStorePath, {
+        threshold: resilienceThreshold,
+        recoveryMs: resilienceRecoveryMs,
+      });
+      const resilienceRegistry = getGlobalResilienceRegistry();
+      let driver: ArenaDriver = new RoutingDriver(routes, { breakers, registry: resilienceRegistry });
 
       const app = services.serverFactory
         ? services.serverFactory(driver, config)
@@ -248,7 +271,7 @@ export function createCli(services: CliServices = {}): Command {
         if (cleaningUp) return;
         cleaningUp = true;
         try {
-          await app.close();
+          await closeServerGracefully(app, { drainTimeoutMs: 10_000 });
         } catch {}
         try {
           if (driver.close) {
@@ -262,7 +285,7 @@ export function createCli(services: CliServices = {}): Command {
       process.once('SIGTERM', cleanup);
 
       await app.listen({ port: config.port, host: config.host });
-      logger.log(`Arena WebBridge listening at http://${config.host}:${config.port}/v1`);
+      logger.log(`EMO-AI-web listening at http://${config.host}:${config.port}/v1`);
     });
 
   // Command: models
@@ -308,7 +331,7 @@ export function createCli(services: CliServices = {}): Command {
         return;
       }
 
-      logger.log('=== Arena WebBridge Profile Status ===');
+      logger.log('=== EMO-AI-web Profile Status ===');
       logger.log(`Profile Directory: ${status.userDataDir}`);
       logger.log(`Directory Exists:  ${status.exists ? 'Yes' : 'No'}`);
       logger.log(
@@ -323,6 +346,44 @@ export function createCli(services: CliServices = {}): Command {
           `Details:           DefaultDir=${status.details.hasDefaultDir}, Cookies=${status.details.hasCookies}, LocalStorage=${status.details.hasLocalStorage}, Files=${status.details.fileCount}`
         );
       }
+    });
+
+  // Command: swarm
+  program
+    .command('swarm [goal]')
+    .description('Launch the autonomous multi-agent swarm coordinator')
+    .option('-m, --mode <mode>', 'Execution mode: auto, pipeline, parallel', 'auto')
+    .action(async (goalArg, options) => {
+      const goal = goalArg || 'Analyze architecture and implement solution';
+      logger.log(`\n🚀 Launching Swarm Coordinator for goal: "${goal}" (mode: ${options.mode})...\n`);
+
+      const config = loadConfig();
+      const browserManager = services.browserManagerFactory
+        ? services.browserManagerFactory(config)
+        : new BrowserManager(config);
+      const arenaDriver = services.driverFactory
+        ? services.driverFactory(browserManager, config)
+        : new DefaultArenaDriver(browserManager as BrowserManager, config);
+
+      const coordinator = new SwarmCoordinator(arenaDriver);
+      const result = await coordinator.executeSwarm(
+        { goal, mode: options.mode },
+        (e) => {
+          if (e.type === 'worker:start') {
+            logger.log(`\n🤖 [@${e.role?.toUpperCase()} | ${e.provider}] ${e.message}`);
+          } else if (e.type === 'worker:chunk' && e.chunk) {
+            process.stdout.write(e.chunk);
+          } else if (e.type === 'worker:done') {
+            logger.log(`\n✨ [DONE] ${e.message}\n`);
+          }
+        }
+      );
+
+      logger.log('\n========================================');
+      logger.log('🎉 Swarm Coordination Completed!');
+      logger.log('========================================\n');
+      logger.log(result.synthesis);
+      await browserManager.close().catch(() => {});
     });
 
   return program;

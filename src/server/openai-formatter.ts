@@ -7,13 +7,6 @@ import type {
 
 /**
  * Formats a single Server-Sent Events (SSE) data line for an OpenAI streaming chunk.
- *
- * @param id Unique ID for the chat completion (e.g. chatcmpl-xxx)
- * @param model Model identifier
- * @param textDelta New token/text content chunk
- * @param finishReason Finish reason ('stop', 'length', etc.) or null
- * @param created Optional unix timestamp in seconds
- * @returns SSE formatted string: "data: {...}\n\n"
  */
 export function formatChatCompletionChunk(
   id: string,
@@ -25,7 +18,7 @@ export function formatChatCompletionChunk(
   const choice: ChatCompletionChunkChoice = {
     index: 0,
     delta: textDelta ? { content: textDelta } : {},
-    finish_reason: (finishReason as 'stop' | 'length' | 'content_filter' | null) ?? null,
+    finish_reason: (finishReason as 'stop' | 'length' | 'content_filter' | 'tool_calls' | null) ?? null,
   };
 
   const chunk: ChatCompletionChunk = {
@@ -37,6 +30,29 @@ export function formatChatCompletionChunk(
   };
 
   return `data: ${JSON.stringify(chunk)}\n\n`;
+}
+
+/**
+ * Formats SSE chunks for streamed tool calls (OpenAI-compatible).
+ */
+export function formatToolCallChunks(
+  id: string,
+  model: string,
+  toolCalls: Array<{ id: string; type?: string; function: { name: string; arguments: string } }>,
+  created?: number
+): string {
+  const ts = created ?? Math.floor(Date.now() / 1000);
+  let out = '';
+  // role chunk
+  out += `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created: ts, model, choices: [{ index: 0, delta: { role: 'assistant', content: null }, finish_reason: null }] })}\n\n`;
+  toolCalls.forEach((tc, i) => {
+    out += `data: ${JSON.stringify({
+      id, object: 'chat.completion.chunk', created: ts, model,
+      choices: [{ index: 0, delta: { tool_calls: [{ index: i, id: tc.id, type: tc.type || 'function', function: { name: tc.function.name, arguments: tc.function.arguments || '' } }] }, finish_reason: null }]
+    })}\n\n`;
+  });
+  out += `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created: ts, model, choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })}\n\n`;
+  return out;
 }
 
 /**
@@ -65,8 +81,11 @@ export function formatChatCompletionResponse(
   fullContent: string,
   promptTokens = 0,
   completionTokens = 0,
-  created?: number
+  created?: number,
+  toolCalls?: unknown[],
+  finishReason: 'stop' | 'length' | 'content_filter' | 'tool_calls' = 'stop'
 ): ChatCompletionResponse {
+  const hasTools = Array.isArray(toolCalls) && toolCalls.length > 0;
   return {
     id,
     object: 'chat.completion',
@@ -78,8 +97,9 @@ export function formatChatCompletionResponse(
         message: {
           role: 'assistant',
           content: fullContent,
+          ...(hasTools ? { tool_calls: toolCalls } : {}),
         },
-        finish_reason: 'stop',
+        finish_reason: hasTools ? 'tool_calls' : finishReason,
       },
     ],
     usage: {

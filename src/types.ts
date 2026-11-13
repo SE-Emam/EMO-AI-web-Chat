@@ -19,6 +19,7 @@ export interface ZaiWebConfig {
   userDataDir: string;
   baseUrl: string;
   headless: boolean;
+  privacyMode?: boolean;
   /** Max time to wait for one generation (including captcha auto-verification). */
   timeoutMs: number;
   /** Max seconds to wait for the Aliyun slider captcha to auto-pass. */
@@ -34,6 +35,7 @@ export interface ClaudeWebConfig {
   userDataDir: string;
   baseUrl: string;
   headless: boolean;
+  privacyMode?: boolean;
   /** Max time to wait for one generation. */
   timeoutMs: number;
 }
@@ -47,6 +49,7 @@ export interface TencentAiWebConfig {
   userDataDir: string;
   baseUrl: string;
   headless: boolean;
+  privacyMode?: boolean;
   /** Max time to wait for one generation. */
   timeoutMs: number;
 }
@@ -60,6 +63,7 @@ export interface GeminiWebConfig {
   userDataDir: string;
   baseUrl: string;
   headless: boolean;
+  privacyMode?: boolean;
   /** Max time to wait for one generation. */
   timeoutMs: number;
 }
@@ -73,8 +77,18 @@ export interface QwenWebConfig {
   userDataDir: string;
   baseUrl: string;
   headless: boolean;
+  privacyMode?: boolean;
   /** Max time to wait for one generation. */
   timeoutMs: number;
+}
+
+export interface CommonWebConfig {
+  enabled: boolean;
+  userDataDir: string;
+  baseUrl?: string;
+  headless?: boolean;
+  privacyMode?: boolean;
+  timeoutMs?: number;
 }
 
 /**
@@ -86,6 +100,22 @@ export interface Config {
   userDataDir: string;
   arenaBaseUrl: string;
   headless: boolean;
+  /**
+   * Task 14 — phase-aware provider timeouts (ms), all configurable with
+   * CONSERVATIVE defaults. `accept` = time for the provider to accept a send
+   * (composer submit); `stall` = max silence while awaiting generation output
+   * before a GENERATION_STALLED classification; `total` = hard ceiling for a
+   * whole request — it must NEVER re-execute a message that was already sent
+   * (a total-timeout after send is unconfirmed, not retried). These
+   * declarative defaults are consumed by provider resilience logic; driver
+   * level enforcement wiring is incremental and documented per task.
+   */
+  providerTimeoutsMs?: {
+    accept?: number;
+    stall?: number;
+    total?: number;
+  };
+  privacyMode?: boolean;
   /** Optional Z.AI provider; when present, matching models bypass the Arena browser. */
   zai?: ZaiConfig;
   /** Optional Z.AI web-session provider (chat.z.ai scraping via persistent Chrome). */
@@ -98,15 +128,35 @@ export interface Config {
   geminiWeb?: GeminiWebConfig;
   /** Optional Qwen web-session provider (chat.qwen.ai). */
   qwenWeb?: QwenWebConfig;
+  /** Optional ChatGPT web-session provider (chatgpt.com). */
+  chatgptWeb?: CommonWebConfig;
+  /** Optional Grok web-session provider (grok.com). */
+  grokWeb?: CommonWebConfig;
+  /** Optional Kimi web-session provider (kimi.com). */
+  kimiWeb?: CommonWebConfig;
+  /** Optional MiniMax web-session provider (agent.minimax.io). */
+  minimaxWeb?: CommonWebConfig;
+  /** Optional LongCat web-session provider (longcat.ai). */
+  longcatWeb?: CommonWebConfig;
+  /** Optional LLM7 web-session provider (llm7.chat). */
+  llm7Web?: CommonWebConfig;
+  /** Optional LLM Kiwi web-session provider (chat.llm.kiwi). */
+  kiwiWeb?: CommonWebConfig;
+  /** Optional DeepSeek web-session provider (chat.deepseek.com). */
+  deepseekWeb?: CommonWebConfig;
+  /** Optional Mistral web-session provider (chat.mistral.ai). */
+  mistralWeb?: CommonWebConfig;
 }
 
 /**
  * Message in an OpenAI chat completion conversation.
  */
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   name?: string;
+  tool_calls?: unknown[];
+  tool_call_id?: string;
 }
 
 /**
@@ -123,6 +173,8 @@ export interface ChatCompletionRequest {
   frequency_penalty?: number;
   stop?: string | string[];
   user?: string;
+  tools?: unknown[];
+  tool_choice?: unknown;
 }
 
 /**
@@ -133,8 +185,9 @@ export interface ChatCompletionChoice {
   message: {
     role: 'assistant';
     content: string;
+    tool_calls?: unknown[];
   };
-  finish_reason: 'stop' | 'length' | 'content_filter' | null;
+  finish_reason: 'stop' | 'length' | 'content_filter' | 'tool_calls' | null;
 }
 
 /**
@@ -158,7 +211,8 @@ export interface ChatCompletionResponse {
  */
 export interface ChatCompletionChunkDelta {
   role?: 'assistant';
-  content?: string;
+  content?: string | null;
+  tool_calls?: unknown[];
 }
 
 /**
@@ -167,7 +221,7 @@ export interface ChatCompletionChunkDelta {
 export interface ChatCompletionChunkChoice {
   index: number;
   delta: ChatCompletionChunkDelta;
-  finish_reason: 'stop' | 'length' | 'content_filter' | null;
+  finish_reason: 'stop' | 'length' | 'content_filter' | 'tool_calls' | null;
 }
 
 /**
@@ -208,7 +262,79 @@ export interface ArenaDriver {
     model: string,
     messages: ChatMessage[],
     onChunk?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    sessionKey?: string
   ): Promise<string>;
   close?(): Promise<void>;
+  /**
+   * Task 13 — declared session capabilities (owner locked decisions). A
+   * driver that cannot isolate/restore MUST declare its real pattern; a
+   * sessionKey is either used safely or refused loudly — never silently
+   * ignored. Optional so non-web drivers are not forced to declare what
+   * they do not have.
+   */
+  getCapabilities?(): import('./arena/driver-capabilities.js').DriverCapabilities;
+  /**
+   * Task 14 — the durable profile directory this driver runs against (used
+   * as the circuit-breaker key half: providerId + profileDir). Optional so
+   * API-only drivers can return undefined; callers fall back to the route
+   * name.
+   */
+  getProfileDir?(): string | undefined;
+}
+
+/**
+ * Swarm and Subagent coordination types.
+ */
+export type SwarmWorkerRole = 'coordinator' | 'architect' | 'coder' | 'reviewer' | 'tester' | 'custom';
+
+export interface SwarmWorkerConfig {
+  role: SwarmWorkerRole;
+  name?: string;
+  provider?: string;
+  task?: string;
+  systemPrompt?: string;
+}
+
+export interface SwarmTaskSlice {
+  id: string;
+  role: SwarmWorkerRole;
+  name: string;
+  provider: string;
+  goal: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  result?: string;
+  error?: string;
+  startedAt?: number;
+  completedAt?: number;
+}
+
+export interface SwarmRequest {
+  goal: string;
+  /** Global system instructions applied to all swarm workers (in addition to role prompts). */
+  systemInstructions?: string;
+  mode?: 'pipeline' | 'parallel' | 'auto';
+  workers?: SwarmWorkerConfig[];
+  stream?: boolean;
+}
+
+export interface SwarmResult {
+  id: string;
+  goal: string;
+  mode: 'pipeline' | 'parallel' | 'auto';
+  status: 'completed' | 'failed' | 'partial';
+  slices: SwarmTaskSlice[];
+  synthesis: string;
+  durationMs: number;
+}
+
+export interface SwarmEvent {
+  type: 'swarm:start' | 'worker:start' | 'worker:chunk' | 'worker:done' | 'worker:error' | 'swarm:synthesis' | 'swarm:done';
+  swarmId: string;
+  taskId?: string;
+  role?: SwarmWorkerRole;
+  provider?: string;
+  message?: string;
+  chunk?: string;
+  timestamp: number;
 }

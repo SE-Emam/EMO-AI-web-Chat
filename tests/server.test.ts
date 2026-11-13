@@ -34,7 +34,7 @@ describe('Fastify Server (createServer)', () => {
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({
         status: 'ok',
-        service: 'arena-web-api',
+        service: 'emo-ai-web',
       });
     });
 
@@ -43,10 +43,15 @@ describe('Fastify Server (createServer)', () => {
       const res = await app.inject({ method: 'GET', url: '/health' });
 
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.body)).toEqual({
-        status: 'ok',
-        service: 'arena-web-api',
-      });
+      const data = JSON.parse(res.body);
+      // Task 14: /health expanded with LOCAL resilience state — the fixed
+      // identity fields are asserted and the new sections must exist.
+      expect(data.status).toBe('ok');
+      expect(data.service).toBe('emo-ai-web');
+      expect(data.gateway.alive).toBe(true);
+      expect(data.providers).toEqual(expect.any(Array));
+      expect(data.broker).toEqual(expect.any(Object));
+      expect(data.requests).toEqual(expect.any(Object));
     });
   });
 
@@ -58,10 +63,11 @@ describe('Fastify Server (createServer)', () => {
       expect(res.statusCode).toBe(200);
       const data = JSON.parse(res.body);
       expect(data.object).toBe('list');
-      expect(data.data).toHaveLength(3);
-      expect(data.data[0].id).toBe('gpt-4o');
-      expect(data.data[0].object).toBe('model');
-      expect(data.data[1].id).toBe('claude-3-5-sonnet');
+      const driverModels = data.data.filter((m: any) => !m.id.startsWith('swarm:'));
+      expect(driverModels).toHaveLength(3);
+      expect(driverModels[0].id).toBe('gpt-4o');
+      expect(driverModels[0].object).toBe('model');
+      expect(driverModels[1].id).toBe('claude-3-5-sonnet');
       expect(mockDriver.listModels).toHaveBeenCalledOnce();
     });
 
@@ -134,7 +140,8 @@ describe('Fastify Server (createServer)', () => {
         'gpt-4o',
         [{ role: 'user', content: 'Say hello' }],
         undefined,
-        expect.any(AbortSignal)
+        expect.any(AbortSignal),
+        expect.any(String)
       );
     });
 
@@ -155,7 +162,8 @@ describe('Fastify Server (createServer)', () => {
         'auto',
         [{ role: 'user', content: 'Hi' }],
         undefined,
-        expect.any(AbortSignal)
+        expect.any(AbortSignal),
+        expect.any(String)
       );
     });
 

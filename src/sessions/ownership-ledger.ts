@@ -16,6 +16,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { readJson, writeJsonAtomic } from './durable-store.js';
 import { ProcessLock } from './process-lock.js';
+import { normalizeProfileDir, IPC_PROTOCOL_VERSION } from '../ipc/profile-owner-transport.js';
 
 export interface ProfileOwnershipEntry {
   profileDir: string;
@@ -23,6 +24,10 @@ export interface ProfileOwnershipEntry {
   pid: number;
   epoch: string;
   heartbeatAt: number;
+  /** Task 11 — advertised only after the loopback IPC server is actually listening. */
+  ipcEndpoint?: string;
+  protocolVersion?: number;
+  startedAt?: number;
 }
 
 export type ClaimResult =
@@ -62,10 +67,15 @@ export class OwnershipLedger {
 
   get(profileDir: string): ProfileOwnershipEntry | null {
     const data = readJson<{ entries: ProfileOwnershipEntry[] }>(this.storePath);
-    return data?.entries.find((e) => e.profileDir === profileDir) ?? null;
+    const normalized = normalizeProfileDir(profileDir);
+    return data?.entries.find((e) => e.profileDir === normalized) ?? null;
   }
 
-  async claimProfile(profileDir: string, ownerInstanceId: string, epoch: string = ''): Promise<ClaimResult> {
+  async claimProfile(rawDir: string, ownerInstanceId: string, epoch: string = ''): Promise<ClaimResult> {
+    // Owner mandatory mod #4: the profile is keyed by its CANONICAL path, so
+    // two processes naming the same directory (via symlinks or /var-style
+    // aliases) can never become two independent claims.
+    const profileDir = normalizeProfileDir(rawDir);
     return this.lock.withLock(this.storePath, async () => {
       const file = await this.load();
       const existing = file.entries.find((e) => e.profileDir === profileDir);
@@ -103,7 +113,8 @@ export class OwnershipLedger {
   }
 
   /** Refreshes the heartbeat; only meaningful for the owner. */
-  async heartbeat(profileDir: string, ownerInstanceId: string, epoch?: string): Promise<boolean> {
+  async heartbeat(rawDir: string, ownerInstanceId: string, epoch?: string): Promise<boolean> {
+    const profileDir = normalizeProfileDir(rawDir);
     return this.lock.withLock(this.storePath, async () => {
       const file = await this.load();
       const entry = file.entries.find((e) => e.profileDir === profileDir);
@@ -115,8 +126,25 @@ export class OwnershipLedger {
     });
   }
 
+  /** Task 11 — advertises the loopback IPC endpoint on the owner's OWN entry.
+   * Only the owner may write it; the endpoint must already be listening. */
+  async updateIpcEndpoint(rawDir: string, ownerInstanceId: string, ipcEndpoint: string): Promise<boolean> {
+    const profileDir = normalizeProfileDir(rawDir);
+    return this.lock.withLock(this.storePath, async () => {
+      const file = await this.load();
+      const entry = file.entries.find((e) => e.profileDir === profileDir);
+      if (!entry || entry.ownerInstanceId !== ownerInstanceId) return false;
+      entry.ipcEndpoint = ipcEndpoint;
+      entry.protocolVersion = IPC_PROTOCOL_VERSION;
+      entry.startedAt = entry.startedAt ?? Date.now();
+      writeJsonAtomic(this.storePath, file);
+      return true;
+    });
+  }
+
   /** ONLY the owner can release its own claim. */
-  async releaseProfile(profileDir: string, ownerInstanceId: string): Promise<boolean> {
+  async releaseProfile(rawDir: string, ownerInstanceId: string): Promise<boolean> {
+    const profileDir = normalizeProfileDir(rawDir);
     return this.lock.withLock(this.storePath, async () => {
       const file = await this.load();
       const entry = file.entries.find((e) => e.profileDir === profileDir);

@@ -28,12 +28,21 @@ export interface ProviderSpec {
 }
 
 export const WEB_PROVIDERS: readonly ProviderSpec[] = [
-  { id: 'arena-browser', name: 'Arena Browser', prefixes: [], defaultBaseUrl: 'https://arena.ai', defaultTimeoutMs: 300_000, profileDir: 'chrome-profile' },
+  { id: 'arena-browser', name: 'Arena Web', prefixes: [], defaultBaseUrl: 'https://arena.ai', defaultTimeoutMs: 300_000, profileDir: 'chrome-profile' },
   { id: 'zai-web', name: 'ZAI Web', prefixes: ['zai-web:'], defaultBaseUrl: 'https://chat.z.ai', defaultTimeoutMs: 180_000, profileDir: 'zai-profile', defaultCaptchaWaitMs: 180_000, alsoMatches: (m) => m.startsWith('glm-') },
   { id: 'claude-web', name: 'Claude Web', prefixes: ['claude-web:', 'claudeai:'], defaultBaseUrl: 'https://claude.ai', defaultTimeoutMs: 300_000, profileDir: 'claude-profile' },
-  { id: 'tencent-ai-web', name: 'Tencent AI Studio Web', prefixes: ['tencent-ai:', 'tencentai:'], defaultBaseUrl: 'https://aistudio.tencent.ai', defaultTimeoutMs: 300_000, profileDir: 'tencent-ai-profile' },
+  { id: 'tencent-ai-web', name: 'Tencent web', prefixes: ['tencent-ai:', 'tencentai:'], defaultBaseUrl: 'https://aistudio.tencent.ai/', defaultTimeoutMs: 300_000, profileDir: 'tencent-aistudio-profile' },
   { id: 'gemini-web', name: 'Gemini Web', prefixes: ['gemini-web:', 'geminiweb:'], defaultBaseUrl: 'https://gemini.google.com', defaultTimeoutMs: 300_000, profileDir: 'gemini-profile' },
   { id: 'qwen-web', name: 'Qwen Web', prefixes: ['qwen-web:', 'qwenweb:'], defaultBaseUrl: 'https://chat.qwen.ai', defaultTimeoutMs: 300_000, profileDir: 'qwen-profile' },
+  { id: 'chatgpt-web', name: 'ChatGPT Web', prefixes: ['chatgpt-web:', 'chatgpt:', 'gpt:'], defaultBaseUrl: 'https://chatgpt.com', defaultTimeoutMs: 300_000, profileDir: 'chatgpt-profile' },
+  { id: 'grok-web', name: 'Grok Web', prefixes: ['grok-web:', 'grok:'], defaultBaseUrl: 'https://grok.com', defaultTimeoutMs: 300_000, profileDir: 'grok-profile' },
+  { id: 'kimi-web', name: 'Kimi Web', prefixes: ['kimi-web:', 'kimi:', 'moonshot:'], defaultBaseUrl: 'https://www.kimi.com', defaultTimeoutMs: 300_000, profileDir: 'kimi-profile' },
+  { id: 'minimax-web', name: 'MiniMax Web', prefixes: ['minimax-web:', 'minimax:', 'hailuo:'], defaultBaseUrl: 'https://agent.minimax.io', defaultTimeoutMs: 300_000, profileDir: 'minimax-profile' },
+  { id: 'longcat-web', name: 'LongCat Web', prefixes: ['longcat-web:', 'longcat:'], defaultBaseUrl: 'https://longcat.ai/chat/', defaultTimeoutMs: 300_000, profileDir: 'longcat-profile' },
+  { id: 'llm7-web', name: 'LLM7 Web', prefixes: ['llm7-web:', 'llm7:'], defaultBaseUrl: 'https://llm7.chat', defaultTimeoutMs: 300_000, profileDir: 'llm7-profile' },
+  { id: 'kiwi-web', name: 'LLM Kiwi Web', prefixes: ['kiwi-web:', 'kiwi:'], defaultBaseUrl: 'https://chat.llm.kiwi', defaultTimeoutMs: 300_000, profileDir: 'kiwi-profile' },
+  { id: 'deepseek-web', name: 'DeepSeek Web', prefixes: ['deepseek-web:', 'deepseek:'], defaultBaseUrl: 'https://chat.deepseek.com', defaultTimeoutMs: 300_000, profileDir: 'deepseek-profile' },
+  { id: 'mistral-web', name: 'Mistral Web', prefixes: ['mistral-web:', 'mistral:', 'lechat:'], defaultBaseUrl: 'https://chat.mistral.ai', defaultTimeoutMs: 300_000, profileDir: 'mistral-profile' },
 ] as const;
 
 export function matchesProvider(id: WebProviderId, model: string): boolean {

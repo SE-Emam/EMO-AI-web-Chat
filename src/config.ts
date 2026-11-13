@@ -29,6 +29,13 @@ export const DEFAULT_CONFIG: Config = {
   // Derived from WEB_PROVIDERS — do not hardcode URLs here.
   arenaBaseUrl: providerSpec('arena-browser').defaultBaseUrl,
   headless: true,
+  // Task 14 — conservative phase-aware provider timeouts (declarative
+  // defaults; total must never re-execute a sent message).
+  providerTimeoutsMs: {
+    accept: 30_000,
+    stall: 90_000,
+    total: 300_000,
+  },
 };
 
 // --- Z.AI REST API (not a web provider) ---
@@ -128,6 +135,7 @@ export function loadConfig(overrides?: Partial<Config>): Config {
           process.env.ZAI_WEB_BASE_URL ??
           DEFAULT_ZAI_WEB_BASE_URL,
         headless: overrides?.zaiWeb?.headless ?? zaiWebHeadless ?? false,
+        privacyMode: overrides?.zaiWeb?.privacyMode ?? false,
         timeoutMs: overrides?.zaiWeb?.timeoutMs ?? (zaiWebTimeoutRaw && !isNaN(zaiWebTimeoutRaw) ? zaiWebTimeoutRaw : DEFAULT_ZAI_WEB_TIMEOUT_MS),
         captchaWaitMs: overrides?.zaiWeb?.captchaWaitMs ?? (zaiWebCaptchaWaitRaw && !isNaN(zaiWebCaptchaWaitRaw) ? zaiWebCaptchaWaitRaw : DEFAULT_ZAI_WEB_CAPTCHA_WAIT_MS),
       }
@@ -157,7 +165,8 @@ export function loadConfig(overrides?: Partial<Config>): Config {
           overrides?.claudeWeb?.baseUrl ??
           process.env.CLAUDE_WEB_BASE_URL ??
           DEFAULT_CLAUDE_WEB_BASE_URL,
-        headless: overrides?.claudeWeb?.headless ?? claudeWebHeadless ?? false,
+        headless: overrides?.claudeWeb?.headless ?? claudeWebHeadless ?? true,
+        privacyMode: overrides?.claudeWeb?.privacyMode ?? false,
         timeoutMs:
           overrides?.claudeWeb?.timeoutMs ??
           (claudeWebTimeoutRaw && !isNaN(claudeWebTimeoutRaw)
@@ -190,7 +199,8 @@ export function loadConfig(overrides?: Partial<Config>): Config {
           overrides?.tencentAiWeb?.baseUrl ??
           process.env.TENCENT_AI_WEB_BASE_URL ??
           DEFAULT_TENCENT_AI_WEB_BASE_URL,
-        headless: overrides?.tencentAiWeb?.headless ?? tencentAiWebHeadless ?? false,
+        headless: overrides?.tencentAiWeb?.headless ?? tencentAiWebHeadless ?? true,
+        privacyMode: overrides?.tencentAiWeb?.privacyMode ?? false,
         timeoutMs:
           overrides?.tencentAiWeb?.timeoutMs ??
           (tencentAiWebTimeoutRaw && !isNaN(tencentAiWebTimeoutRaw)
@@ -223,7 +233,8 @@ export function loadConfig(overrides?: Partial<Config>): Config {
           overrides?.geminiWeb?.baseUrl ??
           process.env.GEMINI_WEB_BASE_URL ??
           DEFAULT_GEMINI_WEB_BASE_URL,
-        headless: overrides?.geminiWeb?.headless ?? geminiWebHeadless ?? false,
+        headless: overrides?.geminiWeb?.headless ?? geminiWebHeadless ?? true,
+        privacyMode: overrides?.geminiWeb?.privacyMode ?? false,
         timeoutMs:
           overrides?.geminiWeb?.timeoutMs ??
           (geminiWebTimeoutRaw && !isNaN(geminiWebTimeoutRaw)
@@ -256,7 +267,8 @@ export function loadConfig(overrides?: Partial<Config>): Config {
           overrides?.qwenWeb?.baseUrl ??
           process.env.QWEN_WEB_BASE_URL ??
           DEFAULT_QWEN_WEB_BASE_URL,
-        headless: overrides?.qwenWeb?.headless ?? qwenWebHeadless ?? false,
+        headless: overrides?.qwenWeb?.headless ?? qwenWebHeadless ?? true,
+        privacyMode: overrides?.qwenWeb?.privacyMode ?? false,
         timeoutMs:
           overrides?.qwenWeb?.timeoutMs ??
           (qwenWebTimeoutRaw && !isNaN(qwenWebTimeoutRaw)

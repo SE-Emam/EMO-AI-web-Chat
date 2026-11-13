@@ -1,10 +1,11 @@
 {
-  "name": "arena-web-api",
+  "name": "emo-ai-web",
   "version": "0.1.0",
-  "description": "OpenAI-compatible Web-to-API bridge for Arena (arena.ai)",
+  "description": "EMO-AI-web — OpenAI-compatible local web-to-API gateway and agent bridge",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
+    "emo-ai-web": "./dist/cli.js",
     "arena-web-api": "./dist/cli.js",
     "webbridge": "./dist/cli.js",
     "arena-webbridge": "./dist/cli.js",
@@ -12,11 +13,13 @@
   },
   "scripts": {
     "build": "tsc && chmod +x dist/cli.js dist/emo-ai.js 2>/dev/null || (tsc && chmod +x dist/cli.js)",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "start": "tsx src/cli.ts serve",
     "login": "tsx src/cli.ts login",
-    "emo": "tsx src/emo-ai.ts"
+    "emo": "tsx src/emo-ai.ts",
+    "swarm": "tsx src/cli.ts swarm"
   },
   "keywords": [
     "arena",
