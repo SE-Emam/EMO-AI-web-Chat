@@ -166,6 +166,16 @@ export interface UiSettings {
   heartbeatTimeoutMs: number;
   /** Live web model discovery scheduler. */
   discovery?: DiscoverySettings;
+  /** The MCP (agent workspace) settings. */
+  mcp?: McpSettings;
+}
+
+export interface McpSettings {
+  /**
+   * The directories the MCP file tools may touch. Empty = the user's home
+   * directory. Narrow it to keep the agents inside a project.
+   */
+  workspaceRoots?: string[];
 }
 
 export interface DiscoverySettings {

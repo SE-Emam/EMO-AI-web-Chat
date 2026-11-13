@@ -6,6 +6,8 @@ import type { CustomAgent, DetectedAgent, GatewayConfigFile, WebProviderId } fro
 import { WEB_PROVIDER_IDS } from '../gateway/types.js';
 import type { ProviderManager } from '../gateway/provider-manager.js';
 import type { UsageTracker } from '../gateway/usage-tracker.js';
+import { isValidApiKey } from '../gateway/security.js';
+import { registerMcpServer } from './mcp-server.js';
 
 function isProviderId(v: string): v is WebProviderId {
   return (WEB_PROVIDER_IDS as string[]).includes(v);
@@ -1219,6 +1221,17 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
   tracker: UsageTracker;
   getGatewayConfig: () => GatewayConfigFile;
 }): void {
+  // --- MCP endpoint -----------------------------------------------------
+  // The agent bindings (Cline, VS Code, OpenCode, Hermes, …) are pointed at
+  // http://127.0.0.1:<port>/mcp for LOCAL FILE ACCESS. This is what makes
+  // that URL real — without it every agent tool call failed with a broken
+  // workspace connection.
+  registerMcpServer(app, {
+    isValidApiKey: (key) => isValidApiKey(key, opts.manager.getValidApiKeys()),
+    apiKey: opts.getGatewayConfig().gateway.apiKey,
+    workspaceRoots: opts.getGatewayConfig().ui?.mcp?.workspaceRoots,
+  });
+
   app.post('/api/gateway/heartbeat', async () => {
     opts.tracker.heartbeat();
     return { ok: true };

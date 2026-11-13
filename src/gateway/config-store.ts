@@ -159,6 +159,7 @@ export function defaultGatewayConfig(): GatewayConfigFile {
     },
     ui: {
       heartbeatTimeoutMs: 15000,
+      mcp: { workspaceRoots: [] },
       discovery: {
         enabled: true,
         intervalMs: 12 * 60 * 60 * 1000,
@@ -292,7 +293,17 @@ function mergeConfig(defaults: GatewayConfigFile, raw: unknown): GatewayConfigFi
       customProviders: Array.isArray(gateway.customProviders) ? gateway.customProviders : defaults.gateway.customProviders,
       customAgents: Array.isArray(gateway.customAgents) ? gateway.customAgents : (defaults.gateway.customAgents || []),
     },
-    ui,
+    ui: {
+      ...ui,
+      mcp: {
+        workspaceRoots: Array.isArray((rawUi.mcp as any)?.workspaceRoots)
+          ? ((rawUi.mcp as any).workspaceRoots as unknown[])
+              .filter((r: unknown): r is string => typeof r === 'string' && r.trim().length > 0)
+              .slice(0, 20)
+              .map((r) => r.trim())
+          : [],
+      },
+    },
     providers,
     routerGroups,
   };

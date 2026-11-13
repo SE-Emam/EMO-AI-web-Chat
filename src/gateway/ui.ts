@@ -3080,6 +3080,7 @@ img.brand-logo{
                   <select id="selMcpTarget" class="form-input" style="direction:ltr" onchange="updateMcpConfigDisplay()">
                     <option value="auto">Auto (حسب الوكيل)</option>
                     <option value="generic">Generic MCP (mcp-remote / HTTP)</option>
+                    <option value="cline">Cline (VS Code)</option>
                     <option value="claude">Claude Desktop</option>
                     <option value="cursor">Cursor</option>
                     <option value="windsurf">Windsurf</option>
@@ -8714,6 +8715,7 @@ function resolveMcpTarget(target, ag){
   if(id === 'cursor') return 'cursor';
   if(id === 'windsurf') return 'windsurf';
   if(id === 'vscode' || id === 'continue' || id === 'roocode' || id === 'copilot') return 'vscode';
+  if(id === 'cline' || id === 'clinevscode') return 'cline';
   if(id === 'zed') return 'zed';
   if(id === 'opencode') return 'opencode';
   return 'generic';
@@ -8741,6 +8743,7 @@ function updateMcpConfigDisplay(){
     '# Model: ' + model,
     '# Gateway: ' + baseV1,
     '# MCP Server Name: ' + serverName,
+    '# MCP Endpoint: ' + mcpUrl + '  (local workspace tools: read_file, write_file, ...)',
     '# Target format: ' + target
   ].join('\\n');
 
@@ -8750,7 +8753,7 @@ function updateMcpConfigDisplay(){
       context_servers: {
         [serverName]: {
           command: 'npx',
-          args: ['-y', 'mcp-remote', mcpUrl],
+          args: ['-y', 'mcp-remote', mcpUrl, '--header', 'Authorization: Bearer ' + apiKey],
           env: {
             GATEWAY_BASE_URL: baseV1,
             GATEWAY_API_KEY: apiKey,
@@ -8761,12 +8764,27 @@ function updateMcpConfigDisplay(){
       }
     };
     cfg = header + '\\n' + JSON.stringify(obj, null, 2) + '\\n\\n# File hint: add under "context_servers" in Zed settings.json.';
+  } else if(target === 'vscode' || target === 'cursor' || target === 'windsurf' || target === 'cline'){
+    // These clients speak MCP over HTTP natively — no npx/mcp-remote needed.
+    const obj = {
+      mcpServers: {
+        [serverName]: {
+          type: 'http',
+          url: mcpUrl,
+          headers: {
+            Authorization: 'Bearer ' + apiKey
+          }
+        }
+      }
+    };
+    cfg = header + '\\n' + JSON.stringify(obj, null, 2) +
+      '\\n\\n# File hint: place in .vscode/mcp.json (VS Code / Cline) or the MCP settings of the client.';
   } else if(target === 'opencode'){
     const obj = {
       mcp: {
         [serverName]: {
           type: 'local',
-          command: ['npx', '-y', 'mcp-remote', mcpUrl],
+          command: ['npx', '-y', 'mcp-remote', mcpUrl, '--header', 'Authorization: Bearer ' + apiKey],
           environment: {
             GATEWAY_BASE_URL: baseV1,
             GATEWAY_API_KEY: apiKey,
@@ -8789,7 +8807,7 @@ function updateMcpConfigDisplay(){
       mcpServers: {
         [serverName]: {
           command: 'npx',
-          args: ['-y', 'mcp-remote', mcpUrl],
+          args: ['-y', 'mcp-remote', mcpUrl, '--header', 'Authorization: Bearer ' + apiKey],
           env
         }
       }
