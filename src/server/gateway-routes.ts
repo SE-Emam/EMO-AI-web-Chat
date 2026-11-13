@@ -1516,7 +1516,34 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
   });
 
   /**
-   * Real connection check (same probe as /ping, clearer name + report shape).
+   * Starts a background sweep that discovers the models of EVERY provider.
+   * It takes minutes (each provider opens its own browser), so it runs in the
+   * background and the UI polls /api/gateway/discovery/job for the progress.
+   */
+  app.post('/api/gateway/discovery/sweep', async (req, reply) => {
+    const job = opts.manager.startDiscoverySweep();
+    if (!job) {
+      return reply.status(503).send({ error: { message: 'Model discovery is not enabled on this gateway.' } });
+    }
+    return { started: true, job };
+  });
+
+  /** Starts a background sweep that checks the CONNECTION of every provider. */
+  app.post('/api/gateway/discovery/check-all', async (req, reply) => {
+    const job = opts.manager.startConnectionSweep();
+    if (!job) {
+      return reply.status(503).send({ error: { message: 'Connection checks are not enabled on this gateway.' } });
+    }
+    return { started: true, job };
+  });
+
+  /** The progress of the running (or last) bulk job. */
+  app.get('/api/gateway/discovery/job', async () => {
+    return { job: opts.manager.getBulkJob() };
+  });
+
+  /**
+   * Real connection check for one provider (same probe as /ping, clearer name + report shape).
    */
   app.post('/api/gateway/providers/:id/connection', async (req, reply) => {
     const { id } = req.params as { id: string };

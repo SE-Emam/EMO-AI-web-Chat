@@ -1214,6 +1214,52 @@ label.model-row.model-stale code{color:var(--text-dim);text-decoration:line-thro
 }
 .model-notif-body{flex:1;min-width:0}
 .model-notif-title{font-size:12px;margin-bottom:2px}
+/* Bulk job progress strip */
+.providers-job-strip{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+  padding:8px 12px;
+  margin-bottom:12px;
+  border:1px solid var(--border);
+  border-radius:8px;
+  background:var(--card-subtle);
+  font-size:11.5px;
+  color:var(--text-muted);
+}
+.job-title{color:var(--text);font-weight:600}
+.job-progress{
+  flex:1 1 160px;
+  min-width:120px;
+  height:6px;
+  border-radius:99px;
+  background:var(--border);
+  overflow:hidden;
+}
+.job-progress-fill{
+  height:100%;
+  background:var(--primary);
+  border-radius:99px;
+  transition:width .3s ease;
+}
+.job-count{font-variant-numeric:tabular-nums}
+.job-current{font-family:var(--font-mono);font-size:11px}
+.job-failed{color:var(--danger)}
+.job-done{color:var(--success)}
+.job-error{color:var(--danger)}
+/* Freshness dot: green = just checked, amber = aging, grey = stale */
+.freshness-dot{
+  display:inline-block;
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  margin-inline-end:3px;
+  vertical-align:middle;
+}
+.freshness-dot.fresh{background:var(--success)}
+.freshness-dot.aging{background:var(--warn)}
+.freshness-dot.stale{background:var(--text-dim)}
 /* The persistent outcome of the last action on a provider card. */
 .provider-result-line{
   display:flex;
@@ -2581,8 +2627,15 @@ img.brand-logo{
           <span class="badge badge-danger" id="modelNotifUnreadBadge" style="display:none">0</span>
         </button>
         <button type="button" class="btn-sm" id="btnNotifMarkAll" onclick="markAllModelNotificationsRead()" data-i18n="notifMarkAll">تعليم الكل كمقروء</button>
-        <span style="font-size:11px;color:var(--text-muted)" data-i18n="notifCenterSub">تُبلّغ هنا كل التغييرات التي يكتشفها الفحص الحيّ</span>
+        <span style="flex:1 1 auto"></span>
+        <button type="button" class="btn-sm" id="btnSweepDiscoverAll" onclick="startBulkJob('discover')" title="" data-i18n-title="btnSweepAllHint" style="display:inline-flex;align-items:center;gap:6px">
+          <span aria-hidden="true">🔎</span><span data-i18n="btnSweepDiscoverAll">اكتشاف كل المزودات</span>
+        </button>
+        <button type="button" class="btn-sm" id="btnSweepConnectAll" onclick="startBulkJob('connect')" title="" data-i18n-title="btnCheckAllHint" style="display:inline-flex;align-items:center;gap:6px">
+          <span aria-hidden="true">⚡</span><span data-i18n="btnSweepConnectAll">فحص كل الاتصالات</span>
+        </button>
       </div>
+      <div class="providers-job-strip" id="providersJobStrip" style="display:none"></div>
       <div id="modelNotificationsPanel" class="model-notif-panel" style="display:none"></div>
 
       <div class="providers-grid" id="providersGrid"></div>
@@ -3690,6 +3743,17 @@ const I18N = {
     btnTestConnectionUnsupported: "فحص الاتصال غير مدعوم",
     btnWorking: "جارٍ التنفيذ…",
     notifCenterTitle: "تغييرات النماذج",
+    btnSweepDiscoverAll: "اكتشاف كل المزودات",
+    btnSweepConnectAll: "فحص كل الاتصالات",
+    btnSweepAllHint: "يفحص كل مزوّد بالترتيب (قد يستغرق عدة دقائق)",
+    btnCheckAllHint: "يفحص اتصال كل مزوّد بالتوازي مع شريط تقدّم",
+    bulkDiscoverAll: "جارٍ اكتشاف نماذج كل المزودات",
+    bulkConnectAll: "جارٍ فحص اتصال كل المزودات",
+    bulkFailedCount: "{count} فشل",
+    ageJustNow: "الآن",
+    ageMinutes: "منذ {count} دقيقة",
+    ageHours: "منذ {count} ساعة",
+    ageDays: "منذ {count} يوم",
     notifCenterSub: "تُبلّغ هنا كل التغييرات التي يكتشفها الفحص الحيّ",
     notifMarkAll: "تعليم الكل كمقروء",
     notifMarkRead: "تعليم كمقروء",
@@ -4270,6 +4334,17 @@ const I18N = {
     btnTestConnectionUnsupported: "Connection test unsupported",
     btnWorking: "Working…",
     notifCenterTitle: "Model changes",
+    btnSweepDiscoverAll: "Discover all providers",
+    btnSweepConnectAll: "Check all connections",
+    btnSweepAllHint: "Scans every provider in turn (may take several minutes)",
+    btnCheckAllHint: "Checks every provider connection with a progress bar",
+    bulkDiscoverAll: "Discovering the models of every provider",
+    bulkConnectAll: "Checking the connection of every provider",
+    bulkFailedCount: "{count} failed",
+    ageJustNow: "just now",
+    ageMinutes: "{count} min ago",
+    ageHours: "{count} h ago",
+    ageDays: "{count} d ago",
     notifCenterSub: "Every change found by the live discovery scan is reported here",
     notifMarkAll: "Mark all read",
     notifMarkRead: "Mark read",
@@ -4853,6 +4928,17 @@ const I18N = {
     btnTestConnectionUnsupported: "Test de connexion non pris en charge",
     btnWorking: "En cours…",
     notifCenterTitle: "Changements de modèles",
+    btnSweepDiscoverAll: "Découvrir tous les fournisseurs",
+    btnSweepConnectAll: "Vérifier toutes les connexions",
+    btnSweepAllHint: "Analyse chaque fournisseur l'un après l'autre (plusieurs minutes)",
+    btnCheckAllHint: "Vérifie la connexion de chaque fournisseur avec une barre de progression",
+    bulkDiscoverAll: "Découverte des modèles de tous les fournisseurs",
+    bulkConnectAll: "Vérification de la connexion de tous les fournisseurs",
+    bulkFailedCount: "{count} échec(s)",
+    ageJustNow: "à l'instant",
+    ageMinutes: "il y a {count} min",
+    ageHours: "il y a {count} h",
+    ageDays: "il y a {count} j",
     notifCenterSub: "Chaque changement détecté par l'analyse en direct est signalé ici",
     notifMarkAll: "Tout marquer comme lu",
     notifMarkRead: "Marquer comme lu",
@@ -5426,6 +5512,17 @@ const I18N = {
     btnTestConnectionUnsupported: "Проверка подключения не поддерживается",
     btnWorking: "Выполняется…",
     notifCenterTitle: "Изменения моделей",
+    btnSweepDiscoverAll: "Найти модели у всех провайдеров",
+    btnSweepConnectAll: "Проверить все подключения",
+    btnSweepAllHint: "Проверяет каждого провайдера по очереди (может занять несколько минут)",
+    btnCheckAllHint: "Проверяет подключение каждого провайдера с индикатором прогресса",
+    bulkDiscoverAll: "Идёт обнаружение моделей у всех провайдеров",
+    bulkConnectAll: "Идёт проверка подключения у всех провайдеров",
+    bulkFailedCount: "ошибок: {count}",
+    ageJustNow: "только что",
+    ageMinutes: "{count} мин назад",
+    ageHours: "{count} ч назад",
+    ageDays: "{count} дн. назад",
     notifCenterSub: "Здесь сообщается о каждом изменении, найденном живым сканированием",
     notifMarkAll: "Отметить все прочитанными",
     notifMarkRead: "Отметить прочитанным",
@@ -5999,6 +6096,17 @@ const I18N = {
     btnTestConnectionUnsupported: "Prueba de conexión no compatible",
     btnWorking: "Trabajando…",
     notifCenterTitle: "Cambios de modelos",
+    btnSweepDiscoverAll: "Obtener modelos de todos los proveedores",
+    btnSweepConnectAll: "Comprobar todas las conexiones",
+    btnSweepAllHint: "Analiza cada proveedor por turnos (puede tardar varios minutos)",
+    btnCheckAllHint: "Comprueba la conexión de cada proveedor con barra de progreso",
+    bulkDiscoverAll: "Obteniendo los modelos de todos los proveedores",
+    bulkConnectAll: "Comprobando la conexión de todos los proveedores",
+    bulkFailedCount: "{count} fallidos",
+    ageJustNow: "ahora mismo",
+    ageMinutes: "hace {count} min",
+    ageHours: "hace {count} h",
+    ageDays: "hace {count} d",
     notifCenterSub: "Aquí se informa de cada cambio detectado por el escaneo en vivo",
     notifMarkAll: "Marcar todo como leído",
     notifMarkRead: "Marcar leído",
@@ -6572,6 +6680,17 @@ const I18N = {
     btnTestConnectionUnsupported: "不支持连接测试",
     btnWorking: "执行中…",
     notifCenterTitle: "模型变更",
+    btnSweepDiscoverAll: "获取所有提供方的模型",
+    btnSweepConnectAll: "检查所有连接",
+    btnSweepAllHint: "依次扫描每个提供方（可能需要数分钟）",
+    btnCheckAllHint: "带进度条检查每个提供方的连接",
+    bulkDiscoverAll: "正在获取所有提供方的模型",
+    bulkConnectAll: "正在检查所有提供方的连接",
+    bulkFailedCount: "{count} 个失败",
+    ageJustNow: "刚刚",
+    ageMinutes: "{count} 分钟前",
+    ageHours: "{count} 小时前",
+    ageDays: "{count} 天前",
     notifCenterSub: "实时扫描发现的每一项变更都会在此报告",
     notifMarkAll: "全部标为已读",
     notifMarkRead: "标为已读",
@@ -7169,6 +7288,67 @@ function providerErrorMessage(e){
 let modelNotifications = [];
 let modelNotifFilter = '';
 
+// ---------------------------------------------------------------------------
+// Bulk jobs: "discover every provider" / "check every connection"
+// ---------------------------------------------------------------------------
+let bulkJobTimer = null;
+
+async function startBulkJob(kind){
+  const endpoint = kind === 'discover' ? '/api/gateway/discovery/sweep' : '/api/gateway/discovery/check-all';
+  const strip = document.getElementById('providersJobStrip');
+  if(strip) strip.style.display = 'flex';
+  try{
+    const res = await api(endpoint, {method:'POST'});
+    renderBulkJob(res.job || null);
+    pollBulkJob();
+  }catch(e){
+    if(strip){
+      strip.innerHTML = '<span class="job-error">⚠ ' + esc(providerErrorMessage(e)) + '</span>';
+    }
+  }
+}
+
+async function pollBulkJob(){
+  if(bulkJobTimer) clearTimeout(bulkJobTimer);
+  try{
+    const res = await api('/api/gateway/discovery/job');
+    renderBulkJob(res.job || null);
+    const job = res.job;
+    if(job && job.running){
+      bulkJobTimer = setTimeout(pollBulkJob, 1500);
+    }else{
+      bulkJobTimer = null;
+      // The cards must show the fresh results.
+      await refreshData();
+      await loadModelNotifications();
+    }
+  }catch(e){
+    bulkJobTimer = null;
+  }
+}
+
+function renderBulkJob(job){
+  const strip = document.getElementById('providersJobStrip');
+  if(!strip) return;
+  if(!job){
+    strip.style.display = 'none';
+    return;
+  }
+  const done = job.done || 0;
+  const total = job.total || 0;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  const label = job.kind === 'discover' ? t('bulkDiscoverAll') : t('bulkConnectAll');
+  const failed = (job.results || []).filter(r => !r.ok).length;
+  strip.style.display = 'flex';
+  strip.innerHTML =
+    '<span class="job-title">' + (job.running ? '⟳ ' : '') + esc(label) + '</span>' +
+    '<div class="job-progress"><div class="job-progress-fill" style="width:' + pct + '%"></div></div>' +
+    '<span class="job-count">' + done + '/' + total + '</span>' +
+    (job.current ? '<span class="job-current">' + esc(job.current) + '</span>' : '') +
+    (failed ? '<span class="job-failed">' + esc(t('bulkFailedCount', { count: failed })) + '</span>' : '') +
+    (job.running ? '' : '<span class="job-done">✓</span>');
+}
+
 async function loadModelNotifications(){
   try{
     const res = await api('/api/gateway/discovery/notifications');
@@ -7324,6 +7504,31 @@ function fmtStamp(iso){
   if(Number.isNaN(d.getTime())) return String(iso);
   const p2=(n)=>String(n).padStart(2,'0');
   return p2(d.getHours()) + ':' + p2(d.getMinutes()) + (d.getDate() !== new Date().getDate() ? ' · ' + p2(d.getMonth()+1) + '/' + p2(d.getDate()) : '');
+}
+
+/**
+ * A compact "how long ago" label + a freshness dot, so the user can see at a
+ * glance whether the shown data is still current.
+ */
+function fmtAge(iso){
+  if(!iso) return '';
+  const then = new Date(iso).getTime();
+  if(Number.isNaN(then)) return '';
+  const mins = Math.max(0, Math.floor((Date.now() - then) / 60000));
+  if(mins < 1) return t('ageJustNow');
+  if(mins < 60) return t('ageMinutes', { count: mins });
+  const hours = Math.floor(mins / 60);
+  if(hours < 24) return t('ageHours', { count: hours });
+  const days = Math.floor(hours / 24);
+  return t('ageDays', { count: days });
+}
+
+function freshnessClass(iso){
+  if(!iso) return 'stale';
+  const mins = (Date.now() - new Date(iso).getTime()) / 60000;
+  if(mins < 60) return 'fresh';
+  if(mins < 12 * 60) return 'aging';
+  return 'stale';
 }
 
 function fmtUptime(ms){
@@ -8980,13 +9185,19 @@ function renderProvidersGrid(providers, force=false){
             (discovery.modelCount != null ? '<span>' + esc(t('discoveryModelsFound', { count: discovery.modelCount })) + '</span>' : '') +
             (discovery.newModelCount ? '<span class="badge badge-success">' + esc(t('discoveryNewModels', { count: discovery.newModelCount })) + '</span>' : '') +
             (discovery.unreadChanges ? '<span class="badge badge-warn" data-act="viewChanges" data-id="' + esc(p.id) + '" style="cursor:pointer">' + esc(t('notifUnread', { count: discovery.unreadChanges })) + '</span>' : ''),
-          discovery.lastSuccessAt ? esc(t('discoveryLastScan', { ts: fmtStamp(discovery.lastSuccessAt) })) : esc(t('discoveryNeverScanned')),
+          discovery.lastSuccessAt
+            ? '<span class="freshness-dot ' + freshnessClass(discovery.lastSuccessAt) + '" title="' + esc(t('discoveryLastScan', { ts: fmtStamp(discovery.lastSuccessAt) })) + '"></span>' +
+              esc(fmtAge(discovery.lastSuccessAt))
+            : esc(t('discoveryNeverScanned')),
         ) +
         statusTile(
           t('connTileLabel'),
           '<span class="badge ' + toneClass(cardView.connection.tone) + '">' + esc(t(cardView.connection.labelKey)) + '</span>' +
             (cardView.connection.latencyMs != null ? '<span>' + esc(String(cardView.connection.latencyMs)) + 'ms</span>' : ''),
-          cardView.connection.checkedAt ? esc(t('connLastCheckAt', { ts: fmtStamp(cardView.connection.checkedAt) })) : esc(t('connStatusNeverChecked')),
+          cardView.connection.checkedAt
+            ? '<span class="freshness-dot ' + freshnessClass(cardView.connection.checkedAt) + '" title="' + esc(t('connLastCheckAt', { ts: fmtStamp(cardView.connection.checkedAt) })) + '"></span>' +
+              esc(fmtAge(cardView.connection.checkedAt))
+            : esc(t('connStatusNeverChecked')),
         ) +
         statusTile(
           t('modelsTileLabel'),

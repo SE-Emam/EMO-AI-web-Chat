@@ -318,7 +318,53 @@ POST /api/gateway/discovery/notifications/:id/read  → { ok: true, unreadCount:
 
 ---
 
-## 13. اختبارات TDD
+## 13. أزرار الدفعة ومؤشّر الحداثة
+
+### الأزرار
+
+| الزر | المسار | السلوك |
+|---|---|---|
+| **🔎 اكتشاف كل المزودات** | `POST /api/gateway/discovery/sweep` | مهمة خلفية: تفحص المزودات **بالترتيب** (1.2 ثانية بين كل واحد) — لا تفتح 15 متصفحًا متوازيًا |
+| **⚡ فحص كل الاتصالات** | `POST /api/gateway/discovery/check-all` | مهمة خلفية: تفحص اتصال كل مزوّد |
+
+كلتاهما **مهمة خلفية** لأن فحص 15 مزوّدًا يستغرق دقائق (كل مزوّد يفتح متصفحه).
+الواجهة تستطلع `GET /api/gateway/discovery/job` كل 1.5 ثانية وتعرض شريط تقدّم:
+
+```
+⟳ جارٍ اكتشاف نماذج كل المزودات   ████████░░░░  11/15   llm7-web
+```
+
+بعد الانتهاء تُحدَّث البطاقات تلقائيًا (`refreshData`) ويُحدَّث مركز الإشعارات.
+
+> خطأٌ مكتشف أثناء ذلك: كان زرّا الدفعة يتشاركان **نفس** الـrunner فيخلط
+> حالة الاكتشاف بحالة الاتصال — فُصل runner لكل نوع.
+
+### مؤشّر الحداثة على البطاقة
+
+نقطة ملوّنة بجانب وقت آخر فحص/آخر اكتشاف:
+
+| اللون | المعنى |
+|---|---|
+| 🟢 أخضر | أُفحص منذ أقل من ساعة |
+| 🟠 كهرماني | بين ساعة و12 ساعة |
+| ⚪ رمادي | أقدم من 12 ساعة (يستحق إعادة فحص) |
+
+مع نص نسبي: «الآن» · «منذ 5 دقيقة» · «منذ 23 دقيقة» · «منذ 3 أيام».
+
+### نتيجة الدفعة الحيّة (على البوابة الحقيقية)
+
+```
+اكتشاف: 14/15 مزوّد (llm7 منتهي المهلة — الموقع لا يستجيب) · 75 نموذجًا
+الإشعارات الناتجة:
+  • Gemini Web  | model_added            | Detailed research 3.1 Pro
+  • Gemini Web  | model_added            | Everyday help 4 Hydrogen
+  • MiniMax Web | model_metadata_changed | M3
+  • Tencent web | model_renamed          | Hy3
+```
+
+---
+
+## 14. اختبارات TDD
 
 | الملف | التغطية |
 |---|---|
@@ -330,7 +376,7 @@ POST /api/gateway/discovery/notifications/:id/read  → { ok: true, unreadCount:
 | `tests/gateway/discovery-routes.test.ts` | مسارات HTTP: discover · notifications · read · read-all · status |
 | `tests/gateway/provider-ui.test.ts` | تنفيذ **سكربت الواجهة الحقيقي** داخل `vm`: أزرار الاكتشاف، مركز الإشعارات، منع الضغط المزدوج |
 
-**إجمالي الاختبارات:** 829 ناجح (0 فاشل) — منها 101 جديدة لهذه المهمة.
+**إجمالي الاختبارات:** 832 ناجح (0 فاشل) — منها 104 جديدة لهذه المهمة.
 
 ### عيوب حقيقية كشفتها الاختبارات وأُصلحت
 
@@ -343,7 +389,7 @@ POST /api/gateway/discovery/notifications/:id/read  → { ok: true, unreadCount:
 
 ---
 
-## 14. مزوّد Tencent
+## 15. مزوّد Tencent
 
 كان `tencent-ai-webDriver` **يعيد كتابة** `aistudio.tencent.ai` إلى
 `yuanbao.tencent.com/chat`، أي أن المزوّد كان يشير لمنتج مختلف عن الموقع
@@ -356,7 +402,7 @@ POST /api/gateway/discovery/notifications/:id/read  → { ok: true, unreadCount:
 
 ---
 
-## 15. حدود التنفيذ
+## 16. حدود التنفيذ
 
 * **بُني وأُعيد تشغيله** بعد موافقة المالك صراحةً (13-11 12:56) — لم يُنشر خارج الجهاز.
 * **Gateway 8989 لم يُمس** — PID 86948 يعمل بنفس binaries.
@@ -368,7 +414,7 @@ POST /api/gateway/discovery/notifications/:id/read  → { ok: true, unreadCount:
 
 ---
 
-## 16. حالة النظام
+## 17. حالة النظام
 
 | البند | الحالة |
 |---|---|

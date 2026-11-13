@@ -39,6 +39,7 @@ import {
 } from './provider-model-discovery.js';
 import type { ModelDiscoveryService, ProviderDiscoveryReport } from './discovery/service.js';
 import type { DiscoveredWebModel } from './discovery/types.js';
+import { BulkJobRunner, type BulkJob } from './discovery/job-runner.js';
 import type { DiscoveryScheduler } from './discovery/scheduler.js';
 import { getDiscoveryAdapter } from './discovery/adapters.js';
 
@@ -265,6 +266,11 @@ export class ProviderManager {
   private discoveryScheduler: DiscoveryScheduler | null = null;
   /** The last discovery report per provider (in-memory, freshest). */
   private readonly discoveryReports = new Map<WebProviderId, ProviderDiscoveryReport>();
+  /**
+   * Background "scan everything" jobs — ONE runner per kind, so a discovery
+   * sweep can never report a connection status (and vice versa).
+   */
+  private bulkJobs: { connect?: BulkJobRunner; discover?: BulkJobRunner } = {};
 
   constructor(opts: { store: GatewayConfigStore; config: GatewayConfigFile; now?: () => number; factories?: Partial<Record<WebProviderId, Factory>>; connectionProbe?: (opts: ConnectionProbeOptions) => Promise<ProviderConnectionReport> }) {
     this.store = opts.store;
@@ -515,6 +521,68 @@ export class ProviderManager {
       unreadChanges,
       proven,
     };
+  }
+
+  /**
+   * Starts a background sweep that checks the CONNECTION of every provider.
+   * It runs in the background (it takes seconds per provider) and the UI polls
+   * the job for progress.
+   */
+  startConnectionSweep(): BulkJob | null {
+    if (!this.connectionProbe) return null;
+    if (!this.bulkJobs.connect) {
+      this.bulkJobs.connect = new BulkJobRunner({
+        runOne: async (providerId) => {
+          const report = await this.checkConnection(providerId as WebProviderId);
+          return {
+            ok: report.status === 'connected',
+            status: report.status,
+            detail: report.detail,
+          };
+        },
+      });
+    }
+    return this.bulkJobs.connect.start('connect', [...WEB_PROVIDER_IDS]);
+  }
+
+  /** Starts a background sweep that discovers the models of every provider. */
+  startDiscoverySweep(): BulkJob | null {
+    if (!this.discoveryService) return null;
+    if (!this.bulkJobs.discover) {
+      this.bulkJobs.discover = new BulkJobRunner({
+        // The providers are scanned one after another (the browser + the
+        // provider's servers are not hammered in parallel).
+        delayMs: 1200,
+        runOne: async (providerId) => {
+          const report = await this.discoveryService!.discover(providerId, {
+            allowHeadedFallback: true,
+          });
+          this.discoveryReports.set(providerId as WebProviderId, report);
+          return {
+            ok: report.status === 'discovered',
+            status: report.status,
+            detail: report.detail,
+            models: report.models.length,
+          };
+        },
+      });
+    }
+    return this.bulkJobs.discover.start('discover', [...WEB_PROVIDER_IDS]);
+  }
+
+  /** The progress of the running (or last) bulk job. */
+  getBulkJob(): BulkJob | null {
+    const running =
+      this.bulkJobs.discover?.get()?.running ? this.bulkJobs.discover.get()
+      : this.bulkJobs.connect?.get()?.running ? this.bulkJobs.connect.get()
+      : null;
+    if (running) return running;
+    // The most recently finished one.
+    const discover = this.bulkJobs.discover?.get();
+    const connect = this.bulkJobs.connect?.get();
+    if (!discover) return connect ?? null;
+    if (!connect) return discover;
+    return (connect.finishedAt || '') > (discover.finishedAt || '') ? connect : discover;
   }
 
   /** The last discovery report of a provider (for the change list). */
