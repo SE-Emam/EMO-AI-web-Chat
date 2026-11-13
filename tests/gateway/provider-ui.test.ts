@@ -467,6 +467,21 @@ describe('Providers & Models page — provider card UI (real gateway UI script)'
     expect((after as any).style.display).toBe('none');
   });
 
+  it('keeps a visible reminder when the scan was postponed, with a "run it now" action', async () => {
+    ui.setFetchHandler(() => ({
+      ok: true,
+      status: 200,
+      json: { job: { id: 'j1', kind: 'discover', running: false, awaitingConsent: false, deferred: true, total: 15, done: 0, results: [], startedAt: '2026-11-13T10:00:00.000Z' } },
+    }));
+    await ui.ctx.checkBulkJob();
+    const strip = await ui.ctx.document.getElementById('providersJobStrip');
+    const html = (strip as any).innerHTML;
+    expect((strip as any).style.display).toBe('flex');
+    expect(html).toContain('btnRunDeferredScan');
+    expect(html).toContain(ui.ctx.t('bulkRunNow'));
+    expect(ui.ctx.t('bulkPostponedTitle')).toContain('مؤجّل');
+  });
+
   it('never opens a visible browser without an explicit approval', async () => {
     const calls: any[] = [];
     ui.setFetchHandler((call) => {

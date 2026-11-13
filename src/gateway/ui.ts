@@ -1248,6 +1248,8 @@ label.model-row.model-stale code{color:var(--text-dim);text-decoration:line-thro
 .job-failed{color:var(--danger)}
 .job-done{color:var(--success)}
 .job-error{color:var(--danger)}
+.job-title + .job-current{flex:1 1 auto}
+.providers-job-strip .btn-primary{font-size:11px;padding:4px 10px}
 /* Consent dialog before a visible browser window is opened */
 .consent-overlay{
   position:fixed;
@@ -3819,6 +3821,9 @@ const I18N = {
     bulkDiscoverAll: "جارٍ اكتشاف نماذج كل المزودات",
     bulkConnectAll: "جارٍ فحص اتصال كل المزودات",
     bulkFailedCount: "{count} فشل",
+    bulkPostponedTitle: "تحديث النماذج مؤجّل",
+    bulkPostponedBody: "لم يُفتح المتصفح لتحديث نماذج المزوّدات — يمكنك تشغيله الآن أو الانتظار حتى الدورة التالية.",
+    bulkRunNow: "شغّله الآن",
     ageJustNow: "الآن",
     ageMinutes: "منذ {count} دقيقة",
     ageHours: "منذ {count} ساعة",
@@ -4419,6 +4424,9 @@ const I18N = {
     bulkDiscoverAll: "Discovering the models of every provider",
     bulkConnectAll: "Checking the connection of every provider",
     bulkFailedCount: "{count} failed",
+    bulkPostponedTitle: "Model update postponed",
+    bulkPostponedBody: "The browser was not opened to update the provider models — you can run it now or wait for the next cycle.",
+    bulkRunNow: "Run it now",
     ageJustNow: "just now",
     ageMinutes: "{count} min ago",
     ageHours: "{count} h ago",
@@ -5022,6 +5030,9 @@ const I18N = {
     bulkDiscoverAll: "Découverte des modèles de tous les fournisseurs",
     bulkConnectAll: "Vérification de la connexion de tous les fournisseurs",
     bulkFailedCount: "{count} échec(s)",
+    bulkPostponedTitle: "Mise à jour des modèles reportée",
+    bulkPostponedBody: "Le navigateur n'a pas été ouvert pour mettre à jour les modèles — vous pouvez le lancer maintenant ou attendre le prochain cycle.",
+    bulkRunNow: "Lancer maintenant",
     ageJustNow: "à l'instant",
     ageMinutes: "il y a {count} min",
     ageHours: "il y a {count} h",
@@ -5615,6 +5626,9 @@ const I18N = {
     bulkDiscoverAll: "Идёт обнаружение моделей у всех провайдеров",
     bulkConnectAll: "Идёт проверка подключения у всех провайдеров",
     bulkFailedCount: "ошибок: {count}",
+    bulkPostponedTitle: "Обновление моделей отложено",
+    bulkPostponedBody: "Браузер не был открыт для обновления моделей — можно запустить сейчас или дождаться следующего цикла.",
+    bulkRunNow: "Запустить сейчас",
     ageJustNow: "только что",
     ageMinutes: "{count} мин назад",
     ageHours: "{count} ч назад",
@@ -6208,6 +6222,9 @@ const I18N = {
     bulkDiscoverAll: "Obteniendo los modelos de todos los proveedores",
     bulkConnectAll: "Comprobando la conexión de todos los proveedores",
     bulkFailedCount: "{count} fallidos",
+    bulkPostponedTitle: "Actualización de modelos pospuesta",
+    bulkPostponedBody: "No se abrió el navegador para actualizar los modelos — puedes ejecutarlo ahora o esperar al próximo ciclo.",
+    bulkRunNow: "Ejecutar ahora",
     ageJustNow: "ahora mismo",
     ageMinutes: "hace {count} min",
     ageHours: "hace {count} h",
@@ -6801,6 +6818,9 @@ const I18N = {
     bulkDiscoverAll: "正在获取所有提供方的模型",
     bulkConnectAll: "正在检查所有提供方的连接",
     bulkFailedCount: "{count} 个失败",
+    bulkPostponedTitle: "模型更新已延后",
+    bulkPostponedBody: "未打开浏览器来更新提供方模型 —— 你可以现在运行，或等待下一个周期。",
+    bulkRunNow: "现在运行",
     ageJustNow: "刚刚",
     ageMinutes: "{count} 分钟前",
     ageHours: "{count} 小时前",
@@ -7432,6 +7452,8 @@ async function answerBrowserConsent(approved){
   }catch(e){ /* the sweep simply stays pending */ }
   if(!approved){
     showToast(t('consentDeferredToast'));
+    await refreshData();
+    void checkBulkJob();
     return;
   }
   if(action && action.kind === 'sweep'){
@@ -7492,6 +7514,11 @@ function applyDiscoveryReport(id, report, state){
 
 async function startBulkJob(kind, opts){
   opts = opts || {};
+  // A manual run always asks before opening a visible browser.
+  if(kind === 'discover' && opts.approved !== true && !opts.skipConsent){
+    showBrowserConsent({kind: 'sweep'});
+    return;
+  }
   const endpoint = kind === 'discover' ? '/api/gateway/discovery/sweep' : '/api/gateway/discovery/check-all';
   const strip = document.getElementById('providersJobStrip');
   if(strip) strip.style.display = 'flex';
@@ -7557,6 +7584,17 @@ function renderBulkJob(job){
     strip.style.display = 'none';
     return;
   }
+
+  // The user POSTPONED the scan -> keep a visible reminder with "run it now".
+  if(job.deferred){
+    strip.style.display = 'flex';
+    strip.innerHTML =
+      '<span class="job-title">' + esc(t('bulkPostponedTitle')) + '</span>' +
+      '<span class="job-current">' + esc(t('bulkPostponedBody')) + '</span>' +
+      '<button type="button" class="btn-primary btn-sm" id="btnRunDeferredScan" onclick="startBulkJob(\\'discover\\')">' + esc(t('bulkRunNow')) + '</button>';
+    return;
+  }
+
   const done = job.done || 0;
   const total = job.total || 0;
   const pct = total ? Math.round((done / total) * 100) : 0;
