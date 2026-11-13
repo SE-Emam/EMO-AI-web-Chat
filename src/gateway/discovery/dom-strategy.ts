@@ -293,20 +293,27 @@ export async function discoverModelsFromDom(
     }
   }
 
-  // 1. Open the picker.
+  // 1. Open the picker — waiting for the control to appear instead of
+  //    sleeping a fixed amount of time.
   let opened = false;
-  for (const sel of config.openPickerSelectors) {
-    try {
-      const loc = page.locator(sel).first();
-      if ((await loc.count()) === 0) continue;
-      if (!(await loc.isVisible())) continue;
-      await loc.click({ timeout: 8000, force: true });
-      opened = true;
-      break;
-    } catch {
-      /* try the next selector */
+  const pickerBudget = Math.max(0, ctx.settleMs ?? 1500);
+  const deadline = Date.now() + pickerBudget;
+  do {
+    for (const sel of config.openPickerSelectors) {
+      try {
+        const loc = page.locator(sel).first();
+        if ((await loc.count()) === 0) continue;
+        if (!(await loc.isVisible())) continue;
+        await loc.click({ timeout: 8000, force: true });
+        opened = true;
+        break;
+      } catch {
+        /* try the next selector */
+      }
     }
-  }
+    if (opened || Date.now() >= deadline) break;
+    await page.waitForTimeout(250);
+  } while (!opened);
   if (!opened) {
     return fail(
       'model_picker_not_found',

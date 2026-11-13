@@ -9,12 +9,12 @@ import {
 } from '../../src/gateway/provider-connection.js';
 
 function httpReply(status: number, body = '') {
-  return async () =>
-    ({
-      ok: status >= 200 && status < 300,
-      status,
-      text: async () => body,
-    }) as unknown as Response;
+  return async () => ({
+    reachable: true,
+    httpStatus: status,
+    latencyMs: 12,
+    timedOut: false,
+  });
 }
 
 describe('Real provider connection probe', () => {
@@ -26,7 +26,7 @@ describe('Real provider connection probe', () => {
       baseUrl: 'https://gemini.google.com',
       profileDir: dir,
       browserAvailable: true,
-      fetchImpl: httpReply(200) as unknown as typeof fetch,
+      probe: httpReply(200),
     });
     expect(report.status).toBe('connected');
     expect(report.signals.providerSiteReachable).toBe(true);
@@ -44,7 +44,7 @@ describe('Real provider connection probe', () => {
       baseUrl: 'https://gemini.google.com',
       profileDir: '',
       browserAvailable: true,
-      fetchImpl: httpReply(200) as unknown as typeof fetch,
+      probe: httpReply(200),
     });
     expect(report.status).toBe('authentication_required');
     expect(report.signals.providerSiteReachable).toBe(true);
@@ -56,7 +56,7 @@ describe('Real provider connection probe', () => {
       providerId: 'gemini-web',
       baseUrl: 'https://gemini.google.com',
       browserAvailable: false,
-      fetchImpl: httpReply(200) as unknown as typeof fetch,
+      probe: httpReply(200),
     });
     expect(report.status).toBe('browser_unavailable');
     expect(report.signals.browserAvailable).toBe(false);
@@ -67,7 +67,7 @@ describe('Real provider connection probe', () => {
       providerId: 'gemini-web',
       baseUrl: 'https://gemini.google.com',
       browserAvailable: true,
-      fetchImpl: httpReply(401) as unknown as typeof fetch,
+      probe: httpReply(401),
     });
     expect(report.status).toBe('authentication_required');
     expect(report.httpStatus).toBe(401);
@@ -78,7 +78,7 @@ describe('Real provider connection probe', () => {
       providerId: 'gemini-web',
       baseUrl: 'https://gemini.google.com',
       browserAvailable: true,
-      fetchImpl: httpReply(429) as unknown as typeof fetch,
+      probe: httpReply(429),
     });
     expect(report.status).toBe('rate_limited');
   });
@@ -88,9 +88,39 @@ describe('Real provider connection probe', () => {
       providerId: 'gemini-web',
       baseUrl: 'https://gemini.google.com',
       browserAvailable: true,
-      fetchImpl: httpReply(402) as unknown as typeof fetch,
+      probe: httpReply(402),
     });
     expect(report.status).toBe('quota_exhausted');
+  });
+
+  it('treats a CDN 403 as CONNECTED when the browser session is present', async () => {
+    // Claude/Answer/… answer a plain GET with 403 (bot protection) even while
+    // the browser session works perfectly — that must not be a failure.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'conn-403-'));
+    fs.writeFileSync(path.join(dir, 'Cookies'), Buffer.alloc(9000, 1));
+    const report = await checkProviderConnection({
+      providerId: 'claude-web',
+      baseUrl: 'https://claude.ai/new',
+      profileDir: dir,
+      browserAvailable: true,
+      probe: httpReply(403),
+    });
+    expect(report.status).toBe('connected');
+    expect(report.httpStatus).toBe(403);
+    expect(report.detail).toMatch(/403/);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reports authentication_required for a web provider without a session', async () => {
+    const report = await checkProviderConnection({
+      providerId: 'kimi-web',
+      baseUrl: 'https://www.kimi.com/',
+      profileDir: '',
+      browserAvailable: true,
+      probe: httpReply(200),
+    });
+    expect(report.status).toBe('authentication_required');
+    expect(report.signals.authenticated).toBe(false);
   });
 
   it('maps HTTP 5xx to provider_unavailable', async () => {
@@ -98,7 +128,7 @@ describe('Real provider connection probe', () => {
       providerId: 'gemini-web',
       baseUrl: 'https://gemini.google.com',
       browserAvailable: true,
-      fetchImpl: httpReply(503) as unknown as typeof fetch,
+      probe: httpReply(503),
     });
     expect(report.status).toBe('provider_unavailable');
   });
@@ -108,9 +138,9 @@ describe('Real provider connection probe', () => {
       providerId: 'gemini-web',
       baseUrl: 'https://gemini.google.com',
       browserAvailable: true,
-      fetchImpl: (async () => {
+      probe: async () => {
         throw Object.assign(new Error('getaddrinfo ENOTFOUND gemini.google.com'), { code: 'ENOTFOUND' });
-      }) as unknown as typeof fetch,
+      },
     });
     expect(report.status).toBe('provider_unavailable');
     expect(report.failureCode).toBe('PROVIDER_UNAVAILABLE');
@@ -123,12 +153,12 @@ describe('Real provider connection probe', () => {
       baseUrl: 'https://gemini.google.com',
       timeoutMs: 1000,
       browserAvailable: true,
-      fetchImpl: ((_url: string, opts: any) =>
-        new Promise((_resolve, reject) => {
-          opts.signal.addEventListener('abort', () =>
-            reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })),
-          );
-        })) as unknown as typeof fetch,
+      probe: async () => ({
+        reachable: false,
+        latencyMs: 1000,
+        timedOut: true,
+        error: Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }),
+      }),
     });
     expect(report.status).toBe('timeout');
     expect(report.failureCode).toBe('NETWORK_TIMEOUT');
@@ -144,7 +174,7 @@ describe('Real provider connection probe', () => {
       browserAvailable: true,
       selectedModels: ['gemini-web:gone'],
       availableModels: ['gemini-web:default'],
-      fetchImpl: httpReply(200) as unknown as typeof fetch,
+      probe: httpReply(200),
     });
     expect(report.status).toBe('unknown');
     expect(report.signals.selectedModelAvailable).toBe(false);
@@ -155,7 +185,7 @@ describe('Real provider connection probe', () => {
     const report = await checkProviderConnection({
       providerId: 'gemini-web',
       baseUrl: '',
-      fetchImpl: httpReply(200) as unknown as typeof fetch,
+      probe: httpReply(200),
     });
     expect(report.status).toBe('unknown');
   });
@@ -166,9 +196,9 @@ describe('Real provider connection probe', () => {
       providerId: 'gemini-web',
       baseUrl: 'https://gemini.google.com',
       browserAvailable: true,
-      fetchImpl: (async () => {
+      probe: async () => {
         throw new Error(`request failed with key ${secret}`);
-      }) as unknown as typeof fetch,
+      },
     });
     const serialized = JSON.stringify(report);
     expect(serialized).not.toContain(secret);

@@ -84,7 +84,10 @@ export class ModelDiscoveryService {
   /**
    * Runs a live discovery for one provider and applies the results.
    */
-  async discover(providerId: string, opts: { timeoutMs?: number } = {}): Promise<ProviderDiscoveryReport> {
+  async discover(
+    providerId: string,
+    opts: { timeoutMs?: number; allowHeadedFallback?: boolean } = {},
+  ): Promise<ProviderDiscoveryReport> {
     const now = this.options.now ?? Date.now;
     const discoveredAt = new Date(now()).toISOString();
 
@@ -118,6 +121,9 @@ export class ModelDiscoveryService {
         driverRunning,
         headless: this.options.headlessFor?.(providerId) ?? true,
         timeoutMs: opts.timeoutMs,
+        // A manual scan may retry with a visible browser window; the
+        // background scheduler never does.
+        allowHeadedFallback: opts.allowHeadedFallback === true,
         now,
       });
       const result = session.result;

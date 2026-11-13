@@ -118,6 +118,27 @@ describe('Entries that are not models are dropped', () => {
   });
 });
 
+describe('The discovery waits for the picker instead of racing a fixed sleep', () => {
+  it('polls the picker selectors until one becomes visible', async () => {
+    const adapter = getDiscoveryAdapter('gemini-web')!;
+    let polls = 0;
+    const page = fixturePage([
+      { selectors: ['button[aria-label*="mode picker" i]'], text: 'Auto', visible: true, reveals: ['gem-menu-item[data-mode-id]'] },
+      { selectors: ['gem-menu-item[data-mode-id]'], text: 'Auto', attrs: { 'data-mode-id': 'argon' }, visible: false },
+    ]);
+    const originalLocator = page.locator.bind(page);
+    (page as any).locator = (selector: string) => {
+      const loc = originalLocator(selector);
+      if (selector.includes('mode picker')) polls++;
+      return loc;
+    };
+    const result = await discoverModelsFromDom('gemini-web', adapter.dom!, { page: page as any, settleMs: 1500, now: Date.now });
+    expect(result.failureReason).toBeUndefined();
+    expect(result.models.map((m) => m.providerModelId)).toEqual(['argon']);
+    expect(polls).toBeGreaterThan(0);
+  });
+});
+
 describe('Cookie/consent overlays are dismissed before the picker is opened', () => {
   it('grok-web: reads the model checkboxes after the cookie banner is dismissed', async () => {
     const adapter = getDiscoveryAdapter('grok-web')!;

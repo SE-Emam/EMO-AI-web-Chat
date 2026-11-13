@@ -126,6 +126,44 @@ describe('Providers & Models page — provider card UI (real gateway UI script)'
     expect(call?.method).toBe('POST');
   });
 
+  it('keeps a PERSISTENT result line on the card after the action (not just a toast)', async () => {
+    ui.renderProvidersGrid([providerState('gemini-web')]);
+    ui.setFetchHandler(() => ({
+      ok: true,
+      status: 200,
+      json: {
+        ok: true,
+        report: {
+          status: 'discovered',
+          source: 'web-ui-dom',
+          models: [{ providerModelId: 'g3', displayName: 'Gemini 3' }],
+          changes: [],
+        },
+      },
+    }));
+    await ui.click('discoverModels', 'gemini-web');
+    // The grid is re-rendered with the outcome (as the live page does).
+    ui.renderProvidersGrid([providerState('gemini-web')]);
+    const html = ui.cardHtml('gemini-web');
+    // The outcome stays ON THE CARD (the toast disappears after 3s).
+    expect(html).toContain('provider-result-line');
+    expect(html).toContain('اكتمل الاكتشاف');
+  });
+
+  it('shows a FAILED connection result on the card as well', async () => {
+    ui.renderProvidersGrid([providerState('claude-web')]);
+    ui.setFetchHandler(() => ({
+      ok: true,
+      status: 200,
+      json: { ok: false, report: { status: 'authentication_required', labelKey: 'connStatusAuthenticationRequired', latencyMs: 12, detail: 'no session' } },
+    }));
+    await ui.click('testConnection', 'claude-web');
+    ui.renderProvidersGrid([providerState('claude-web')]);
+    const html = ui.cardHtml('claude-web');
+    expect(html).toContain('provider-result-line error');
+    expect(html).toContain('يلزم تسجيل الدخول');
+  });
+
   it('never reports success when the discovery failed', async () => {
     ui.renderProvidersGrid([providerState('gemini-web')]);
     ui.setFetchHandler(() => ({

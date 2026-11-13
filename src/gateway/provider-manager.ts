@@ -435,7 +435,9 @@ export class ProviderManager {
    */
   async discoverModels(id: WebProviderId): Promise<ProviderDiscoveryReport | null> {
     if (!this.discoveryService) return null;
-    const report = await this.discoveryService.discover(id);
+    // Manual scan: a headed retry is allowed (some providers block a headless
+    // browser). The background scheduler stays headless.
+    const report = await this.discoveryService.discover(id, { allowHeadedFallback: true });
     this.discoveryReports.set(id, report);
     return report;
   }

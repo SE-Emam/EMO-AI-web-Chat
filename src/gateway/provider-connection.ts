@@ -18,6 +18,9 @@
  *  - A status is only 'connected' when every checked signal is actually true.
  */
 import fs from 'node:fs';
+import http from 'node:http';
+import https from 'node:https';
+import path from 'node:path';
 import { chromium } from 'playwright';
 import { classifyFailure, type ProviderFailureCode } from '../arena/provider-failures.js';
 import { detectDiskProfileAuth } from './auth-detector.js';
@@ -90,8 +93,11 @@ export interface ConnectionProbeOptions {
   availableModels?: string[];
   /** Per-request timeout for the probe. */
   timeoutMs?: number;
-  /** Injectable fetch (tests). */
-  fetchImpl?: typeof fetch;
+  /**
+   * Injectable probe (tests). The production probe is a raw node:https
+   * request — see `probeProviderSite`.
+   */
+  probe?: (baseUrl: string, timeoutMs: number) => Promise<ProbeResult>;
   /** Injectable browser-availability probe (tests). */
   browserAvailable?: boolean;
   /** Literal secret values that must never appear in the report. */
@@ -108,8 +114,11 @@ const PROBE_USER_AGENT =
 let cachedBrowserAvailability: { value: boolean; at: number } | null = null;
 
 /**
- * Checks whether a Chromium build usable by Playwright exists locally.
- * Cached for 60s — the answer changes only when Playwright is installed.
+ * Checks whether a Chromium build usable by the adapters exists locally.
+ *
+ * The adapters prefer the INSTALLED Google Chrome (`channel: 'chrome'`) and
+ * fall back to Playwright's bundled Chromium — so BOTH count. Only when
+ * neither exists is the browser really unavailable.
  */
 export function isBrowserAvailable(now: () => number = Date.now): boolean {
   const ts = now();
@@ -117,11 +126,32 @@ export function isBrowserAvailable(now: () => number = Date.now): boolean {
     return cachedBrowserAvailability.value;
   }
   let value = false;
+  // 1) Playwright's bundled Chromium.
   try {
     const exe = chromium.executablePath();
-    value = Boolean(exe) && fs.existsSync(exe);
+    if (exe && fs.existsSync(exe)) value = true;
   } catch {
-    value = false;
+    /* not installed */
+  }
+  // 2) The installed Google Chrome (what the drivers actually use).
+  if (!value) {
+    for (const candidate of [
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Chromium.app/Contents/MacOS/Chromium',
+      '/usr/bin/google-chrome',
+      '/usr/bin/google-chrome-stable',
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser',
+    ]) {
+      try {
+        if (fs.existsSync(candidate)) {
+          value = true;
+          break;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
   }
   cachedBrowserAvailability = { value, at: ts };
   return value;
@@ -139,7 +169,7 @@ export function resetBrowserAvailabilityCache(): void {
  */
 export { maskLiteralSecrets };
 
-interface ProbeResult {
+export interface ProbeResult {
   reachable: boolean;
   httpStatus?: number;
   latencyMs: number;
@@ -149,41 +179,78 @@ interface ProbeResult {
 
 /**
  * Performs the actual HTTP probe against the provider's own base URL.
- * No credentials are attached — this proves the provider is reachable, it does
- * not attempt to authenticate.
+ *
+ * Node's global `fetch` (undici) aborts with `UND_ERR_HEADERS_OVERFLOW` on
+ * some provider CDNs (Google/Gemini among them) because their response
+ * headers exceed undici's 16 KB default — the provider would then be
+ * reported as UNREACHABLE while it is perfectly fine. A raw `node:https`
+ * request with a raised header limit answers the same question reliably.
  */
-async function probeProviderSite(
+function probeProviderSite(
   baseUrl: string,
   timeoutMs: number,
-  fetchImpl: typeof fetch,
+  userAgent: string,
 ): Promise<ProbeResult> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const t0 = Date.now();
-  try {
-    const res = await fetchImpl(baseUrl, {
-      method: 'GET',
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: {
-        'User-Agent': PROBE_USER_AGENT,
-        Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
-      },
-    });
-    // Drain the body so the socket is released promptly.
-    await res.text().catch(() => '');
-    return { reachable: true, httpStatus: res.status, latencyMs: Math.max(1, Date.now() - t0), timedOut: false };
-  } catch (err) {
-    const aborted = controller.signal.aborted;
-    return {
-      reachable: false,
-      latencyMs: Math.max(1, Date.now() - t0),
-      timedOut: aborted,
-      error: err,
+  return new Promise<ProbeResult>((resolve) => {
+    const started = Date.now();
+    let settled = false;
+    const finish = (result: { reachable: boolean; httpStatus?: number; timedOut: boolean; error?: unknown }) => {
+      if (settled) return;
+      settled = true;
+      resolve({ latencyMs: Math.max(1, Date.now() - started), ...result });
     };
-  } finally {
-    clearTimeout(timer);
-  }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(baseUrl);
+    } catch (e) {
+      finish({ reachable: false, timedOut: false, error: e });
+      return;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      finish({ reachable: false, timedOut: false, error: new Error(`Unsupported protocol: ${parsed.protocol}`) });
+      return;
+    }
+
+    const transport = parsed.protocol === 'http:' ? http : https;
+    let request: http.ClientRequest;
+    try {
+      request = transport.request(
+        parsed,
+        {
+          method: 'GET',
+          maxHeaderSize: 256 * 1024,
+          headers: {
+            'User-Agent': userAgent,
+            Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            Connection: 'close',
+          },
+        },
+        (res) => {
+          // The STATUS is all we need — the body is never required.
+          res.resume();
+          finish({ reachable: true, httpStatus: res.statusCode || 0, timedOut: false });
+          request.destroy();
+        },
+      );
+    } catch (e) {
+      finish({ reachable: false, timedOut: false, error: e });
+      return;
+    }
+
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(Object.assign(new Error(`timeout after ${timeoutMs}ms`), { name: 'TimeoutError' }));
+    });
+    request.on('error', (e: NodeJS.ErrnoException) => {
+      finish({
+        reachable: false,
+        timedOut: e.name === 'TimeoutError' || e.code === 'ETIMEDOUT',
+        error: e,
+      });
+    });
+    request.end();
+  });
 }
 
 /** Maps an HTTP status to a connection status (evidence-first). */
@@ -222,7 +289,6 @@ async function runConnectionProbe(
   const caps = getProviderCapabilities(opts.providerId);
   const checkedAt = new Date(now()).toISOString();
   const timeoutMs = Math.max(1000, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-  const fetchImpl = opts.fetchImpl ?? (globalThis.fetch as typeof fetch);
 
   if (!caps.canTestConnection) {
     return {
@@ -280,7 +346,9 @@ async function runConnectionProbe(
   let endpoint = baseUrl;
   let probe: ProbeResult;
   try {
-    probe = await probeProviderSite(baseUrl, timeoutMs, fetchImpl);
+    probe = opts.probe
+      ? await opts.probe(baseUrl, timeoutMs)
+      : await probeProviderSite(baseUrl, timeoutMs, PROBE_USER_AGENT);
   } catch (err) {
     probe = { reachable: false, latencyMs: 1, timedOut: false, error: err };
   }
@@ -329,21 +397,44 @@ async function runConnectionProbe(
   let status: ProviderConnectionStatus = httpDerived;
   let detail: string;
 
-  if (httpDerived === 'connected') {
+  if (caps.connectionType === 'web') {
+    // For a WEB provider the HTTP status of the site root says almost nothing
+    // about the session: many providers answer a plain GET with 403 (CDN) or
+    // redirect to the sign-in page even while the browser session works fine.
+    // The AUTHENTICATION signal for a web provider is the profile's session;
+    // the reachability signal is "the host answered at all".
+    if (httpStatus === 429) {
+      status = 'rate_limited';
+      detail = `Provider answered HTTP ${httpStatus} (rate limited).`;
+    } else if (httpStatus === 402) {
+      status = 'quota_exhausted';
+      detail = `Provider answered HTTP ${httpStatus} (quota exhausted).`;
+    } else if (httpStatus === 401) {
+      status = 'authentication_required';
+      detail = `Provider answered HTTP ${httpStatus} (authentication required).`;
+    } else if (httpStatus >= 500) {
+      status = 'provider_unavailable';
+      detail = `Provider answered HTTP ${httpStatus} (server error).`;
+    } else if (!browserAvailable) {
+      status = 'browser_unavailable';
+      detail = 'Provider site is reachable, but no Chromium build is installed for the browser adapters.';
+    } else if (!profilePresent) {
+      status = 'authentication_required';
+      detail = 'Provider site is reachable, but no browser profile exists yet — sign in first.';
+    } else if (!authenticated) {
+      status = 'authentication_required';
+      detail = 'Provider site is reachable, but the browser profile carries no active session.';
+    } else {
+      status = 'connected';
+      detail =
+        httpStatus === 403
+          ? 'Provider site reachable (its CDN answers plain requests with 403) and the browser session is present.'
+          : 'Provider site reachable and browser session present.';
+    }
+  } else if (httpDerived === 'connected') {
     if (!browserAvailable) {
       status = 'browser_unavailable';
       detail = 'Provider site is reachable, but no Chromium build is installed for the browser adapters.';
-    } else if (caps.connectionType === 'web') {
-      if (!profilePresent) {
-        status = 'authentication_required';
-        detail = 'Provider site is reachable, but no browser profile exists yet — sign in first.';
-      } else if (!authenticated) {
-        status = 'authentication_required';
-        detail = 'Provider site is reachable, but the browser profile carries no active session.';
-      } else {
-        status = 'connected';
-        detail = 'Provider site reachable and browser session present.';
-      }
     } else {
       status = 'connected';
       detail = 'Provider endpoint reachable.';

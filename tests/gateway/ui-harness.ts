@@ -24,7 +24,6 @@ export type FetchHandler = (call: FetchCall) => FetchReply | Promise<FetchReply>
 class FakeElement {
   tagName: string;
   id = '';
-  innerHTML = '';
   textContent = '';
   className = '';
   value = '';
@@ -46,6 +45,19 @@ class FakeElement {
 
   constructor(tag = 'div') {
     this.tagName = tag;
+  }
+
+  /**
+   * Setting innerHTML replaces the content: an empty string clears the
+   * children (like a real DOM), a non-empty string stores the markup.
+   */
+  get innerHTML(): string {
+    return this._html;
+  }
+
+  set innerHTML(value: string) {
+    this._html = value ?? '';
+    if (this._html === '') this.children = [];
   }
 
   appendChild(child: FakeElement): FakeElement {

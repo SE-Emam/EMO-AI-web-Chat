@@ -1167,6 +1167,24 @@ label.model-row.model-stale code{color:var(--text-dim);text-decoration:line-thro
 }
 .model-notif-body{flex:1;min-width:0}
 .model-notif-title{font-size:12px;margin-bottom:2px}
+/* The persistent outcome of the last action on a provider card. */
+.provider-result-line{
+  display:flex;
+  align-items:flex-start;
+  gap:8px;
+  margin-top:8px;
+  padding:7px 10px;
+  border-radius:6px;
+  font-size:11.5px;
+  line-height:1.5;
+  border:1px solid var(--border);
+  background:var(--card-subtle);
+}
+.provider-result-line.ok{border-color:var(--success-border);background:var(--success-bg);color:var(--success)}
+.provider-result-line.error{border-color:var(--danger-border);background:var(--danger-bg);color:var(--danger)}
+.provider-result-icon{font-weight:700}
+.provider-result-text{flex:1;min-width:0;word-break:break-word}
+.provider-result-at{opacity:.7;white-space:nowrap;font-variant-numeric:tabular-nums}
 
 /* Interactive Topology Graph - Live Flow */
 .topology-box{
@@ -3658,6 +3676,13 @@ const I18N = {
     toastDiscoveryFailed: "فشل الاكتشاف: {error}",
     toastDiscoveryDeferred: "أُجّل الاكتشاف: {reason}",
     toastNoChanges: "لا توجد تغييرات في النماذج.",
+    cardResultDiscovered: "اكتمل الاكتشاف: {count} نموذج ({source})",
+    cardResultDiscoveredWithChanges: "اكتمل الاكتشاف: {count} نموذج، منها {newCount} جديد",
+    cardResultDiscoveryFailed: "فشل الاكتشاف: {error}",
+    cardResultDeferred: "أُجّل الاكتشاف: {reason}",
+    cardResultConnected: "الاتصال سليم ({status}) — {ms}ms",
+    cardResultNotConnected: "الاتصال ليس جاهزًا ({status}) — {reason}",
+    cardResultConnectionFailed: "فشل فحص الاتصال: {error}",
     modelsSourceLabel: "المصدر",
     modelsSourceConfiguredCatalog: "قائمة مُهيّأة — ليست اكتشافًا حيًّا",
     modelsSourceLiveApi: "اكتشاف حي عبر نقطة /models",
@@ -4213,6 +4238,13 @@ const I18N = {
     toastDiscoveryFailed: "Discovery failed: {error}",
     toastDiscoveryDeferred: "Discovery postponed: {reason}",
     toastNoChanges: "No model changes detected.",
+    cardResultDiscovered: "Discovery finished: {count} model(s) ({source})",
+    cardResultDiscoveredWithChanges: "Discovery finished: {count} model(s), {newCount} new",
+    cardResultDiscoveryFailed: "Discovery failed: {error}",
+    cardResultDeferred: "Discovery postponed: {reason}",
+    cardResultConnected: "Connection OK ({status}) — {ms}ms",
+    cardResultNotConnected: "Connection not ready ({status}) — {reason}",
+    cardResultConnectionFailed: "Connection check failed: {error}",
     modelsSourceLabel: "Source",
     modelsSourceConfiguredCatalog: "Configured catalog — not live discovery",
     modelsSourceLiveApi: "Live discovery via the /models endpoint",
@@ -4771,6 +4803,13 @@ const I18N = {
     toastDiscoveryFailed: "Échec de la découverte : {error}",
     toastDiscoveryDeferred: "Découverte reportée : {reason}",
     toastNoChanges: "Aucun changement de modèle détecté.",
+    cardResultDiscovered: "Découverte terminée : {count} modèle(s) ({source})",
+    cardResultDiscoveredWithChanges: "Découverte terminée : {count} modèle(s), dont {newCount} nouveau(x)",
+    cardResultDiscoveryFailed: "Échec de la découverte : {error}",
+    cardResultDeferred: "Découverte reportée : {reason}",
+    cardResultConnected: "Connexion OK ({status}) — {ms} ms",
+    cardResultNotConnected: "Connexion non prête ({status}) — {reason}",
+    cardResultConnectionFailed: "Échec du test de connexion : {error}",
     modelsSourceLabel: "Source",
     modelsSourceConfiguredCatalog: "Catalogue configuré — pas de découverte en direct",
     modelsSourceLiveApi: "Découverte en direct via le point /models",
@@ -5319,6 +5358,13 @@ const I18N = {
     toastDiscoveryFailed: "Не удалось выполнить обнаружение: {error}",
     toastDiscoveryDeferred: "Обнаружение отложено: {reason}",
     toastNoChanges: "Изменений моделей не обнаружено.",
+    cardResultDiscovered: "Обнаружение завершено: {count} модель(ей) ({source})",
+    cardResultDiscoveredWithChanges: "Обнаружение завершено: {count} модель(ей), новых: {newCount}",
+    cardResultDiscoveryFailed: "Не удалось выполнить обнаружение: {error}",
+    cardResultDeferred: "Обнаружение отложено: {reason}",
+    cardResultConnected: "Подключение в порядке ({status}) — {ms} мс",
+    cardResultNotConnected: "Подключение не готово ({status}) — {reason}",
+    cardResultConnectionFailed: "Проверка подключения не удалась: {error}",
     modelsSourceLabel: "Источник",
     modelsSourceConfiguredCatalog: "Настроенный каталог — не живое обнаружение",
     modelsSourceLiveApi: "Живое обнаружение через точку /models",
@@ -5867,6 +5913,13 @@ const I18N = {
     toastDiscoveryFailed: "Error en el descubrimiento: {error}",
     toastDiscoveryDeferred: "Descubrimiento aplazado: {reason}",
     toastNoChanges: "No se detectaron cambios de modelos.",
+    cardResultDiscovered: "Descubrimiento completado: {count} modelo(s) ({source})",
+    cardResultDiscoveredWithChanges: "Descubrimiento completado: {count} modelo(s), {newCount} nuevo(s)",
+    cardResultDiscoveryFailed: "Error en el descubrimiento: {error}",
+    cardResultDeferred: "Descubrimiento aplazado: {reason}",
+    cardResultConnected: "Conexión correcta ({status}) — {ms}ms",
+    cardResultNotConnected: "Conexión no lista ({status}) — {reason}",
+    cardResultConnectionFailed: "Error en la prueba de conexión: {error}",
     modelsSourceLabel: "Fuente",
     modelsSourceConfiguredCatalog: "Catálogo configurado — no es descubrimiento en vivo",
     modelsSourceLiveApi: "Descubrimiento en vivo vía el endpoint /models",
@@ -6415,6 +6468,13 @@ const I18N = {
     toastDiscoveryFailed: "发现失败：{error}",
     toastDiscoveryDeferred: "发现已延后：{reason}",
     toastNoChanges: "未检测到模型变更。",
+    cardResultDiscovered: "发现完成：{count} 个模型（{source}）",
+    cardResultDiscoveredWithChanges: "发现完成：{count} 个模型，其中 {newCount} 个新增",
+    cardResultDiscoveryFailed: "发现失败：{error}",
+    cardResultDeferred: "发现已延后：{reason}",
+    cardResultConnected: "连接正常（{status}）— {ms}ms",
+    cardResultNotConnected: "连接未就绪（{status}）— {reason}",
+    cardResultConnectionFailed: "连接检测失败：{error}",
     modelsSourceLabel: "来源",
     modelsSourceConfiguredCatalog: "已配置目录 — 非实时发现",
     modelsSourceLiveApi: "通过 /models 接口实时发现",
@@ -6911,6 +6971,30 @@ let providerCardBusy = new Set();
 // Last error per card action, so a failed operation stays visible after the
 // grid is re-rendered by the status poll.
 let providerCardErrors = new Map();
+// The outcome of the last action on each card (success OR failure) — the
+// toast is transient, this line stays until the next action.
+let providerCardResults = new Map();
+
+/**
+ * Re-renders the provider cards immediately (the status poll runs every 3s,
+ * but an action's outcome must show up at once).
+ */
+function refreshProviderCards(){
+  if(stateData && Array.isArray(stateData.providers)) renderProvidersGrid(stateData.providers, true);
+}
+
+/**
+ * Merges the fresh provider state returned by an action into the current
+ * state, so the badges (live discovery / connection) update AT ONCE instead
+ * of waiting for the next poll.
+ */
+function applyFreshProviderState(id, state){
+  if(!state || !stateData || !Array.isArray(stateData.providers)) return;
+  const idx = stateData.providers.findIndex(p => p.id === id);
+  if(idx >= 0) stateData.providers[idx] = state;
+  else stateData.providers.push(state);
+  refreshProviderCards();
+}
 
 /** Extracts a secret-free, human-readable message from a failed API call. */
 function providerErrorMessage(e){
@@ -8717,9 +8801,17 @@ function renderProvidersGrid(providers, force=false){
         : '');
 
     const refreshDisabled = cardView.refresh.disabled || refreshBusy;
-    const refreshLabel = refreshBusy ? t(cardView.refresh.busyLabelKey) : t(cardView.refresh.labelKey);
+    const refreshLabel = refreshBusy ? '⟳ ' + t(cardView.refresh.busyLabelKey) : t(cardView.refresh.labelKey);
     const testDisabled = cardView.test.disabled || testBusy;
-    const testLabel = testBusy ? t(cardView.test.busyLabelKey) : t(cardView.test.labelKey);
+    const testLabel = testBusy ? '⟳ ' + t(cardView.test.busyLabelKey) : t(cardView.test.labelKey);
+    const lastResult = providerCardResults.get(p.id);
+    const resultLineHtml = lastResult
+      ? '<div class="provider-result-line ' + (lastResult.ok ? 'ok' : 'error') + '">' +
+          '<span class="provider-result-icon">' + (lastResult.ok ? '✓' : '⚠') + '</span>' +
+          '<span class="provider-result-text">' + esc(lastResult.text) + '</span>' +
+          '<span class="provider-result-at">' + esc(lastResult.at) + '</span>' +
+        '</div>'
+      : '';
     const discovery = cardView.discovery || { status: 'never_scanned', labelKey: 'discoveryNeverScanned', tone: 'muted', unreadChanges: 0, proven: false };
     const discoveryBusy = providerCardBusy.has(busyKey('discoverModels'));
     const discoverDisabled = discoveryBusy || discovery.status === 'unsupported';
@@ -8795,7 +8887,7 @@ function renderProvidersGrid(providers, force=false){
 
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;flex-wrap:wrap;gap:6px">' +
           '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-            '<button class="btn-sm" data-act="discoverModels" data-id="' + esc(p.id) + '"' + (discoverDisabled ? ' disabled' : '') + ' title="' + esc(t('btnDiscoverModelsHint')) + '">' + esc(discoveryBusy ? t('btnWorking') : t('btnDiscoverModels')) + '</button>' +
+            '<button class="btn-sm" data-act="discoverModels" data-id="' + esc(p.id) + '"' + (discoverDisabled ? ' disabled' : '') + ' title="' + esc(t('btnDiscoverModelsHint')) + '">' + esc(discoveryBusy ? '⟳ ' + t('btnWorking') : t('btnDiscoverModels')) + '</button>' +
             '<button class="btn-sm" data-act="checkChanges" data-id="' + esc(p.id) + '">' + esc(t('btnCheckChanges')) + '</button>' +
             '<button class="btn-sm" data-act="viewChanges" data-id="' + esc(p.id) + '">' + esc(t('btnViewChanges')) + '</button>' +
             '<button class="btn-primary btn-sm" data-act="saveModels" data-id="' + esc(p.id) + '">' + t('btnSaveModels') + '</button>' +
@@ -8809,6 +8901,7 @@ function renderProvidersGrid(providers, force=false){
             '</button>' +
           '</div>' +
         '</div>' +
+        resultLineHtml +
       '</div>';
 
     grid.appendChild(card);
@@ -8911,25 +9004,38 @@ function renderProvidersGrid(providers, force=false){
             if(report.status === 'discovered'){
               const count = (report.models || []).length;
               const newCount = (report.changes || []).filter(c => c.type === 'model_added' || c.type === 'model_restored').length;
+              const srcText = report.source === 'web-ui-dom' ? t('modelsSourceLiveWebUi') : (report.source === 'web-ui-network' ? t('modelsSourceLiveWebUi') : t('modelsSourceLiveWebUi'));
+              const text = newCount > 0
+                ? t('cardResultDiscoveredWithChanges', { count: count, newCount: newCount })
+                : t('cardResultDiscovered', { count: count, source: srcText });
+              providerCardResults.set(id, { ok: true, text: text, at: new Date().toLocaleTimeString() });
+              applyFreshProviderState(id, res.state);
               showToast(t('toastDiscoveryDone', { count: count, newCount: newCount }));
               if(newCount > 0){
                 showToast(t('toastDiscoveryChanges', { count: newCount }));
                 await loadModelNotifications();
               }
             }else if(report.deferred){
-              providerCardErrors.set(key, report.detail || '');
-              showToast(t('toastDiscoveryDeferred', { reason: report.detail || t('discoveryDeferred') }), 'error');
+              const reason = report.detail || t('discoveryDeferred');
+              providerCardErrors.set(key, reason);
+              providerCardResults.set(id, { ok: false, text: t('cardResultDeferred', { reason: reason }), at: new Date().toLocaleTimeString() });
+              applyFreshProviderState(id, res.state);
+              showToast(t('toastDiscoveryDeferred', { reason: reason }), 'error');
             }else{
               const msg = report.detail || report.failureReason || 'unknown';
               providerCardErrors.set(key, msg);
+              providerCardResults.set(id, { ok: false, text: t('cardResultDiscoveryFailed', { error: msg }), at: new Date().toLocaleTimeString() });
+              applyFreshProviderState(id, res.state);
               showToast(t('toastDiscoveryFailed', { error: msg }), 'error');
             }
           }catch(e){
             const msg = providerErrorMessage(e);
             providerCardErrors.set(key, msg);
+            providerCardResults.set(id, { ok: false, text: t('cardResultDiscoveryFailed', { error: msg }), at: new Date().toLocaleTimeString() });
             showToast(t('toastDiscoveryFailed', { error: msg }), 'error');
           }finally{
             providerCardBusy.delete(key);
+            refreshProviderCards();
             await refreshData();
             await loadModelNotifications();
           }
@@ -8952,6 +9058,7 @@ function renderProvidersGrid(providers, force=false){
             showToast(t('toastDiscoveryFailed', { error: providerErrorMessage(e) }), 'error');
           }finally{
             providerCardBusy.delete(key);
+            refreshProviderCards();
             await refreshData();
           }
         }
@@ -8968,7 +9075,14 @@ function renderProvidersGrid(providers, force=false){
             const res = await api('/api/gateway/providers/' + encodeURIComponent(id) + '/connection', {method:'POST'});
             const report = res.report || {};
             const statusText = t(report.labelKey || 'connStatusUnknown');
-            showToast(t('toastConnectionResult', { status: statusText, ms: report.latencyMs || 0 }));
+            const ok = report.status === 'connected';
+            const text = ok
+              ? t('cardResultConnected', { status: statusText, ms: report.latencyMs || 0 })
+              : t('cardResultNotConnected', { status: statusText, reason: report.detail || '' });
+            providerCardResults.set(id, { ok: ok, text: text, at: new Date().toLocaleTimeString() });
+            applyFreshProviderState(id, res.state);
+            if(!ok) providerCardErrors.set(key, report.detail || statusText);
+            showToast(t('toastConnectionResult', { status: statusText, ms: report.latencyMs || 0 }), ok ? 'info' : 'error');
           }catch(e){
             const msg = providerErrorMessage(e);
             providerCardErrors.set(key, msg);

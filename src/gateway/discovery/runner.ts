@@ -41,6 +41,15 @@ export interface DiscoverySessionOptions {
   timeoutMs?: number;
   /** How long the page may take to render before the picker is looked for. */
   settleMs?: number;
+  /**
+   * Allow a HEADED retry when the headless scan found nothing.
+   *
+   * Several providers serve a different (or blocked) page to a headless
+   * browser. A manual scan may retry with a visible window; the background
+   * scheduler must NOT open windows on the user's desktop, so it leaves this
+   * off.
+   */
+  allowHeadedFallback?: boolean;
   signal?: AbortSignal;
   now?: () => number;
   /** Executable override (tests / environments with a custom browser). */
@@ -170,21 +179,25 @@ export class PlaywrightDiscoveryRunner implements DiscoveryRunner {
       );
     }
 
-    // 3. Launch headless on the provider's own profile.
+    // 3. Launch on the provider's own profile.
     cleanupStaleProfileLocks(profileDir);
     const captured: CapturedResponse[] = [];
     let ctx: BrowserContext | null = null;
-    try {
+
+    const launch = async (headless: boolean): Promise<BrowserContext> => {
       const launchOptions: Record<string, unknown> = {
-        headless: options.headless !== false,
+        headless,
         viewport: { width: 1440, height: 900 },
         args: ['--disable-blink-features=AutomationControlled'],
         ignoreDefaultArgs: ['--enable-automation'],
       };
       if (options.executablePath) launchOptions.executablePath = options.executablePath;
       else if (options.useChromeChannel !== false) launchOptions.channel = 'chrome';
+      return chromium.launchPersistentContext(profileDir, launchOptions as any);
+    };
 
-      ctx = await chromium.launchPersistentContext(profileDir, launchOptions as any);
+    try {
+      ctx = await launch(options.headless !== false);
     } catch (e) {
       const message = (e as Error).message;
       const locked = /ProcessSingleton|existing browser session|Opening in existing|profile.*lock|SingletonLock/i.test(message);
@@ -220,8 +233,11 @@ export class PlaywrightDiscoveryRunner implements DiscoveryRunner {
       await page.waitForTimeout(options.settleMs ?? 9000);
 
       // A CDN challenge page means the provider refused the browser session.
+      // A manual scan may retry with a visible browser (which usually passes);
+      // the background scheduler reports the challenge instead.
       const title = (await page.title().catch(() => '')) || '';
-      if (/just a moment|attention required|checking your browser/i.test(title)) {
+      const challenged = /just a moment|attention required|checking your browser/i.test(title);
+      if (challenged && options.allowHeadedFallback !== true) {
         return {
           providerId: options.providerId,
           captured,
@@ -247,32 +263,135 @@ export class PlaywrightDiscoveryRunner implements DiscoveryRunner {
         now,
       };
 
-      let best: ModelDiscoveryResult | null = null;
-      let bestStable = -1;
-      const failures: ModelDiscoveryResult[] = [];
+      const runStrategies = async (): Promise<{
+        best: ModelDiscoveryResult | null;
+        failures: ModelDiscoveryResult[];
+      }> => {
+        let best: ModelDiscoveryResult | null = null;
+        let bestStable = -1;
+        const failures: ModelDiscoveryResult[] = [];
 
-      for (const strategy of adapter.strategies) {
-        if (options.signal?.aborted) break;
-        let attempt: ModelDiscoveryResult | null = null;
-        if (strategy === 'dom' && adapter.dom) {
-          attempt = await discoverModelsFromDom(options.providerId, adapter.dom, ctxArgs);
-        } else if (strategy === 'network' && adapter.network && adapter.network.urlPatterns.length > 0) {
-          attempt = await discoverModelsFromNetwork(options.providerId, adapter.network, ctxArgs, captured);
-        } else if (strategy === 'embedded' && adapter.embedded) {
-          attempt = await discoverModelsFromEmbeddedCatalog(options.providerId, adapter.embedded, ctxArgs);
+        for (const strategy of adapter.strategies) {
+          if (options.signal?.aborted) break;
+          let attempt: ModelDiscoveryResult | null = null;
+          if (strategy === 'dom' && adapter.dom) {
+            attempt = await discoverModelsFromDom(options.providerId, adapter.dom, ctxArgs);
+          } else if (strategy === 'network' && adapter.network && adapter.network.urlPatterns.length > 0) {
+            attempt = await discoverModelsFromNetwork(options.providerId, adapter.network, ctxArgs, captured);
+          } else if (strategy === 'embedded' && adapter.embedded) {
+            attempt = await discoverModelsFromEmbeddedCatalog(options.providerId, adapter.embedded, ctxArgs);
+          }
+          if (!attempt) continue;
+          if (attempt.failureReason) {
+            failures.push(attempt);
+            continue;
+          }
+          // A result with STABLE ids is strictly better than one that only has
+          // display names (only those can be executed by the driver).
+          const stable = attempt.models.filter((m) => m.identityConfidence === 'stable-id' && m.providerModelId).length;
+          if (stable > bestStable) {
+            bestStable = stable;
+            best = attempt;
+          }
         }
-        if (!attempt) continue;
+        return { best, failures };
+      };
 
-        if (attempt.failureReason) {
-          failures.push(attempt);
-          continue;
+      let { best, failures } = await runStrategies();
+
+      // The chat UIs are flaky during their first render: if the picker was not
+      // found, RELOAD the page and try once more before giving up.
+      const needsRetry =
+        !best && failures.some((f) => f.failureReason === 'model_picker_not_found');
+      if (needsRetry && !options.signal?.aborted) {
+        try {
+          await page.reload({ waitUntil: 'domcontentloaded', timeout: options.timeoutMs ?? 45_000 });
+          await page.waitForTimeout(options.settleMs ?? 9000);
+          captured.length = 0;
+          const retry = await runStrategies();
+          if (retry.best) {
+            best = retry.best;
+            failures = retry.failures;
+          }
+        } catch {
+          /* keep the first result */
         }
-        // A result with STABLE ids is strictly better than one that only has
-        // display names (only those can be executed by the driver).
-        const stable = attempt.models.filter((m) => m.identityConfidence === 'stable-id' && m.providerModelId).length;
-        if (stable > bestStable) {
-          bestStable = stable;
-          best = attempt;
+      }
+
+      // Some providers serve a blocked or reduced page to a HEADLESS browser.
+      // A manual scan may retry with a visible window (the background
+      // scheduler never does — it must not open windows on the desktop).
+      const canRetryHeaded =
+        !best &&
+        options.allowHeadedFallback === true &&
+        options.headless !== false &&
+        !options.signal?.aborted &&
+        failures.some((f) =>
+          f.failureReason === 'model_picker_not_found' ||
+          f.failureReason === 'site_layout_changed' ||
+          f.failureReason === 'provider_unavailable' ||
+          f.failureReason === 'authentication_required');
+      if (canRetryHeaded) {
+        try {
+          await ctx.close().catch(() => {});
+          ctx = await launch(false);
+          const page2 = ctx.pages()[0] || (await ctx.newPage());
+          page2.on('response', (res) => {
+            void (async () => {
+              try {
+                const url = res.url();
+                const ct = res.headers()['content-type'] || '';
+                if (!/json|text|javascript/i.test(ct)) return;
+                if (res.status() >= 400) return;
+                const body = await res.text().catch(() => '');
+                if (!body || body.length > 8_000_000) return;
+                captured.push({ url, status: res.status(), body, contentType: ct });
+              } catch {
+                /* ignore */
+              }
+            })();
+          });
+          await page2.goto(adapter.entryUrl, { waitUntil: 'domcontentloaded', timeout: options.timeoutMs ?? 45_000 });
+          await page2.waitForTimeout(options.settleMs ?? 9000);
+          const ctx2 = {
+            page: wrapPage(page2),
+            signal: options.signal,
+            timeoutMs: options.timeoutMs,
+            settleMs: 2500,
+            now,
+          };
+          const headed = await (async () => {
+            let bestH: ModelDiscoveryResult | null = null;
+            let bestStableH = -1;
+            const failuresH: ModelDiscoveryResult[] = [];
+            for (const strategy of adapter.strategies) {
+              let attempt: ModelDiscoveryResult | null = null;
+              if (strategy === 'dom' && adapter.dom) {
+                attempt = await discoverModelsFromDom(options.providerId, adapter.dom, ctx2);
+              } else if (strategy === 'network' && adapter.network && adapter.network.urlPatterns.length > 0) {
+                attempt = await discoverModelsFromNetwork(options.providerId, adapter.network, ctx2, captured);
+              } else if (strategy === 'embedded' && adapter.embedded) {
+                attempt = await discoverModelsFromEmbeddedCatalog(options.providerId, adapter.embedded, ctx2);
+              }
+              if (!attempt) continue;
+              if (attempt.failureReason) {
+                failuresH.push(attempt);
+                continue;
+              }
+              const stable = attempt.models.filter((m) => m.identityConfidence === 'stable-id' && m.providerModelId).length;
+              if (stable > bestStableH) {
+                bestStableH = stable;
+                bestH = attempt;
+              }
+            }
+            return { best: bestH, failures: failuresH };
+          })();
+          if (headed.best) {
+            best = headed.best;
+            failures = headed.failures;
+          }
+        } catch {
+          /* keep the headless result */
         }
       }
 
