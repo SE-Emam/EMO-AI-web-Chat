@@ -146,6 +146,11 @@ function buildInstructions(ctx: WorkspaceToolContext, configuredRoots: string[])
     'Tools:',
     ...lines,
     '.env and credential files are never returned — their secret values come back as [redacted].',
+    '',
+    'Tool execution:',
+    '- Tools are executed by the client on the user\'s machine',
+    '- Results are returned as actual output from the client',
+    '- Continue with the task after receiving tool results',
   ].join('\n');
 }
 

@@ -19,6 +19,9 @@
  * Neither mechanism executes anything: the block is a REQUEST. The client's
  * own tool does the work and the result comes back through the normal
  * agent loop.
+ * 
+ * Fact-only environment block (Phase 1): Replaces judgmental language with
+ * facts about the workspace, tools, and execution model.
  */
 import fs from 'node:fs';
 import { NEUTRAL_CORRECTION_MARKER } from '../arena/tool-bridge-markers.js';
@@ -222,6 +225,43 @@ export function buildHintSection(call: ToolCallBlock, phase: 'first' | 'next' = 
 }
 
 /**
+ * Fact-only environment block (Phase 1): Builds a system message block with
+ * facts about the workspace, tools, and execution model — no judgments.
+ */
+export function buildFactOnlyEnvironmentBlock(tools: AnnouncedTool[], roots: string[]): string {
+  const toolList = tools
+    .slice(0, 12)
+    .map((t) => {
+      const required = (t.parameters?.required || []).map(String);
+      const props = Object.keys(t.parameters?.properties || {});
+      const shown = required.length ? required : props.slice(0, 2);
+      return `${t.name}${shown.length ? `(${shown.join(', ')})` : ''}`;
+    })
+    .join(', ');
+
+  return [
+    '### WORKSPACE ENVIRONMENT',
+    '',
+    'Approved workspace roots:',
+    ...roots.map((root, i) => `${i + 1}. ${root}`),
+    '',
+    'Available tools in this request:',
+    toolList || 'None',
+    '',
+    'Tool execution model:',
+    '- The client executes tools on this machine and returns real results',
+    '- Tools are not executed until explicitly requested in a ```tool_call``` block',
+    '- Use full project paths under an approved root',
+    '- A tool result is the actual output from the client',
+    '',
+    'Instructions:',
+    '- Output a ```tool_call``` block to request a tool',
+    '- The tool runs on the client machine and returns its result',
+    '- Continue with the task after receiving the result',
+  ].join('\n');
+}
+
+/**
  * The corrective text for a model that answered with prose instead of a
  * tool call.
  *
@@ -320,6 +360,49 @@ export function buildContinuationCall(messages: ChatMessage[], tools: AnnouncedT
 }
 
 /**
+ * Continuation block after tool results (Phase 3): Provides a fact-only
+ * continuation message when a tool result has been received.
+ */
+export function buildContinuationBlock(call: ToolCallBlock | null, tools: AnnouncedTool[]): string {
+  const catalog = tools
+    .slice(0, 12)
+    .map((t) => {
+      const required = (t.parameters?.required || []).map(String);
+      const props = Object.keys(t.parameters?.properties || {});
+      const shown = required.length ? required : props.slice(0, 2);
+      return `${t.name}${shown.length ? `(${shown.join(', ')})` : ''}`;
+    })
+    .join(', ');
+
+  const lines = [
+    '### TOOL RESULT AND CONTINUATION',
+    '',
+    'The tool result above is the actual output from the client machine.',
+    'To continue with this task, request the next tool:',
+  ];
+
+  if (call) {
+    lines.push('The next call for this task is this block:', call.block);
+  } else {
+    lines.push(
+      'Request one call in this shape, using one of the available tools:',
+      '```tool_call',
+      '{"name":"TOOL_NAME","arguments":{"arg":"value"}}',
+      '```'
+    );
+  }
+
+  lines.push(
+    'Available tools:',
+    catalog || 'None',
+    '',
+    'The tool runs on the client machine and returns its actual result.',
+  );
+
+  return lines.join('\n');
+}
+
+/**
  * Puts the corrective text into the system message that carries the tool
  * instruction. A missing system message is created.
  */
@@ -337,6 +420,22 @@ export function withCorrectionSection(messages: ChatMessage[], correction: strin
   }
   out[idx] = { ...out[idx], content: `${String(out[idx].content || '')}\n\n${correction}` };
   return out;
+}
+
+/**
+ * Adds fact-only environment block to the system message (Phase 1).
+ */
+export function withFactOnlyEnvironment(messages: ChatMessage[], tools: AnnouncedTool[], roots: string[]): ChatMessage[] {
+  const block = buildFactOnlyEnvironmentBlock(tools, roots);
+  return withSystemBlock(messages, block);
+}
+
+/**
+ * Adds continuation block after tool results (Phase 3).
+ */
+export function withContinuationBlock(messages: ChatMessage[], call: ToolCallBlock | null, tools: AnnouncedTool[]): ChatMessage[] {
+  const block = buildContinuationBlock(call, tools);
+  return withSystemBlock(messages, block);
 }
 
 /**
@@ -428,6 +527,59 @@ export function repairArguments(
 }
 
 /**
+ * Validates tool arguments against the announced schema.
+ * Returns corrected arguments and whether they changed.
+ */
+export function validateToolArguments(
+  args: Record<string, unknown>,
+  tool: AnnouncedTool
+): { args: Record<string, unknown>; valid: boolean; changed: boolean } {
+  const props = tool.parameters?.properties || {};
+  const required = new Set((tool.parameters?.required || []).map(String));
+  const out: Record<string, unknown> = {};
+  let changed = false;
+  let valid = true;
+
+  // Validate known properties
+  for (const [key, value] of Object.entries(args || {})) {
+    if (props[key]) {
+      // Type validation (basic)
+      const expectedType = props[key].type || 'string';
+      if (expectedType === 'string' && typeof value !== 'string') {
+        valid = false;
+        continue;
+      }
+      if (expectedType === 'number' && typeof value !== 'number') {
+        valid = false;
+        continue;
+      }
+      if (expectedType === 'boolean' && typeof value !== 'boolean') {
+        valid = false;
+        continue;
+      }
+      out[key] = value;
+      continue;
+    }
+  }
+
+  // Check for required properties
+  for (const prop of required) {
+    if (out[prop] === undefined) {
+      valid = false;
+      // Try to fill from remaining values
+      const candidates = Object.entries(args).filter(([k]) => !props[k]);
+      if (candidates.length === 1 && typeof candidates[0][1] === 'string') {
+        out[prop] = candidates[0][1];
+        delete out[candidates[0][0]];
+        changed = true;
+      }
+    }
+  }
+
+  return { args: out, valid, changed };
+}
+
+/**
  * Rewrites the tool calls in a reply so the client's schema matches.
  * Only the fenced ```tool_call``` blocks are touched, and only when the
  * arguments really change.
@@ -436,6 +588,7 @@ export function repairToolCallArguments(text: string, tools: AnnouncedTool[]): s
   if (!text || !tools.length) return text;
   const byName = new Map(tools.map((t) => [t.name, t]));
   let out = text;
+  let changed = false;
   const fence = /```([^\n`]*)\n?([\s\S]*?)```/g;
   let m: RegExpExecArray | null;
   while ((m = fence.exec(text)) !== null) {
@@ -457,10 +610,22 @@ export function repairToolCallArguments(text: string, tools: AnnouncedTool[]): s
       continue;
     }
     const repaired = repairArguments(args, tool);
-    if (!repaired.changed) continue;
-    const next = { ...parsed, arguments: repaired.args };
-    const replacement = '```' + m[1] + '\n' + JSON.stringify(next) + '\n```';
-    out = out.replace(m[0], replacement);
+    const validated = validateToolArguments(repaired.args, tool);
+    if (!validated.valid) {
+      // If validation fails, try to fix it
+      const fixed = validateToolArguments(args, tool);
+      if (fixed.valid) {
+        const next = { ...parsed, arguments: fixed.args };
+        const replacement = '```' + m[1] + '\n' + JSON.stringify(next) + '\n```';
+        out = out.replace(m[0], replacement);
+        changed = true;
+      }
+    } else if (repaired.changed) {
+      const next = { ...parsed, arguments: repaired.args };
+      const replacement = '```' + m[1] + '\n' + JSON.stringify(next) + '\n```';
+      out = out.replace(m[0], replacement);
+      changed = true;
+    }
   }
   return out;
 }

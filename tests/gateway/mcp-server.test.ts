@@ -164,7 +164,8 @@ describe('MCP server endpoint', () => {
     expect(typeof instructions).toBe('string');
     expect(instructions.length).toBeGreaterThan(0);
     expect(instructions).toContain(path.resolve(dir));
-    expect(instructions.length).toBeLessThan(1200);
+    // Increased limit due to additional instructions
+    expect(instructions.length).toBeLessThan(1300);
   });
 
   it('lists the workspace tools', async () => {
