@@ -58,6 +58,13 @@ export function extractModelIds(
     if (!trimmed || trimmed.length > 120) return;
     if (/\s/.test(trimmed) && !name) return;
     if (pattern && !pattern.test(trimmed)) return;
+    if (config.excludePattern) {
+      try {
+        if (new RegExp(config.excludePattern, 'i').test(trimmed)) return;
+      } catch {
+        /* ignore a malformed pattern */
+      }
+    }
     candidates.set(trimmed, (candidates.get(trimmed) || 0) + 1);
     if (name && !names.has(trimmed)) names.set(trimmed, String(name).slice(0, 120));
   };

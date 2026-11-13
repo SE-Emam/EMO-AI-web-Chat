@@ -223,6 +223,8 @@ export const DISCOVERY_ADAPTERS: Record<WebProviderId, WebModelDiscoveryAdapter>
       // never leaks into the model list.
       optionSelectors: ['gem-menu-item[data-mode-id][role="menuitemradio"]', 'gem-menu-item[data-mode-id]'],
       idAttributes: ['data-mode-id'],
+      // Gemini lists an "upsell" pseudo-mode next to the real ones.
+      excludeIdPatterns: ['^upsell_'],
       labelExtraction: 'text',
       metadataAttributes: ['data-test-id', 'role'],
       loginWallSelectors: ['form[action*="signin" i]', 'input[type="password"]'],

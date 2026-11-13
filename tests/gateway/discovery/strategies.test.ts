@@ -105,6 +105,19 @@ describe('Provider model ids read from the provider\'s OWN requests', () => {
   });
 });
 
+describe('Entries that are not models are dropped', () => {
+  it('gemini-web: drops the "upsell" pseudo-mode', async () => {
+    const adapter = getDiscoveryAdapter('gemini-web')!;
+    const elements: ElementFixture[] = [
+      { selectors: ['button[aria-label*="mode picker" i]'], text: 'Auto', visible: true, reveals: ['gem-menu-item[data-mode-id]'] },
+      { selectors: ['gem-menu-item[data-mode-id]'], text: 'Auto', attrs: { 'data-mode-id': 'argon' } },
+      { selectors: ['gem-menu-item[data-mode-id]'], text: 'Upgrade', attrs: { 'data-mode-id': 'upsell_MODE_CATEGORY_ULTRA' } },
+    ];
+    const result = await discoverModelsFromDom('gemini-web', adapter.dom!, ctx(fixturePage(elements)));
+    expect(result.models.map((m) => m.providerModelId)).toEqual(['argon']);
+  });
+});
+
 describe('Cookie/consent overlays are dismissed before the picker is opened', () => {
   it('grok-web: reads the model checkboxes after the cookie banner is dismissed', async () => {
     const adapter = getDiscoveryAdapter('grok-web')!;

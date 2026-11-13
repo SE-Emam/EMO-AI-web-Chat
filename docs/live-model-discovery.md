@@ -208,7 +208,40 @@ service.discover()
 
 ---
 
-## 10. اختبارات TDD
+## 10. التحقّق الحيّ على البوابة المُشغَّلة (بعد Build + Restart)
+
+تم البناء وإعادة تشغيل البوابة، ثم استُدعيت النقاط الحقيقية عبر HTTP:
+
+```bash
+POST /api/gateway/providers/gemini-web/discover
+  → status: discovered · source: web-ui-dom · baseline: true
+  → executable models: 4 (8c46e95b…, 56fdd199…, e6fa609c…, argon)
+  → card.discovery: { status: active, modelCount: 4, lastScanAt: … }
+```
+
+**إثبات قاعدة «تأكيد الحذف» على أرض الواقع:** بعد إصلاح مُرشِّح
+`upsell_MODE_CATEGORY_ULTRA` (مدخل ترويجي وليس نموذجًا):
+
+| الفحص | النماذج | التغييرات | الإشعارات |
+|---|---|---|---|
+| 1 | 4 (بدون الـupsell) | **لا شيء** — الغياب مرة واحدة لا يكفي | 0 |
+| 2 | 4 | `model_removed: upsell_MODE_CATEGORY_ULTRA` | **1** |
+
+ثم التحقّق من مركز الإشعارات:
+
+```
+GET  /api/gateway/discovery/notifications
+  → unreadCount: 1
+  → Gemini Web · model_removed · "Most complex work 4 Carbon" · link: #providers/gemini-web
+POST /api/gateway/discovery/notifications/:id/read  → { ok: true, unreadCount: 0 }
+```
+
+**الملفات الدائمة بعد التشغيل:**
+`~/.arena-webbridge/provider-model-snapshots.json` · `~/.arena-webbridge/provider-model-notifications.json`
+
+---
+
+## 11. اختبارات TDD
 
 | الملف | التغطية |
 |---|---|
@@ -220,7 +253,7 @@ service.discover()
 | `tests/gateway/discovery-routes.test.ts` | مسارات HTTP: discover · notifications · read · read-all · status |
 | `tests/gateway/provider-ui.test.ts` | تنفيذ **سكربت الواجهة الحقيقي** داخل `vm`: أزرار الاكتشاف، مركز الإشعارات، منع الضغط المزدوج |
 
-**إجمالي الاختبارات:** 819 ناجح (0 فاشل) — منها 92 جديدة لهذه المهمة.
+**إجمالي الاختبارات:** 820 ناجح (0 فاشل) — منها 93 جديدة لهذه المهمة.
 
 ### عيوب حقيقية كشفتها الاختبارات وأُصلحت
 
@@ -233,7 +266,7 @@ service.discover()
 
 ---
 
-## 11. ملففات Symptom: مزوّد Tencent
+## 12. مزوّد Tencent
 
 كان `tencent-ai-webDriver` **يعيد كتابة** `aistudio.tencent.ai` إلى
 `yuanbao.tencent.com/chat`، أي أن المزوّد كان يشير لمنتج مختلف عن الموقع
@@ -246,9 +279,9 @@ service.discover()
 
 ---
 
-## 12. حدود التنفيذ
+## 13. حدود التنفيذ
 
-* **لم يُبنَ** (`npm run build` لم يُنفَّذ) · **لم يُنشر** · **لم تُعدَّل** `dist/`.
+* **بُني وأُعيد تشغيله** بعد موافقة المالك صراحةً (13-11 12:56) — لم يُنشر خارج الجهاز.
 * **Gateway 8989 لم يُمس** — PID 86948 يعمل بنفس binaries.
 * **لم تُنفَّذ أي أوامر Git** أثناء التطوير (الحفظ المحلي تم بناءً على طلب صريح من المستخدم).
 * **الملفات المشتركة لم تُعدَّل**: `src/server/app.ts` · `src/server/tool-interpreter.ts` ·
@@ -258,13 +291,13 @@ service.discover()
 
 ---
 
-## 13. حالة النظام
+## 14. حالة النظام
 
 | البند | الحالة |
 |---|---|
-| Gateway 8989 | **لم يُمس** |
+| Gateway 8989 | ✅ أُعيد تشغيله بإذن المالك (PID جديد، نفس الأمر) |
 | PID 86948 | **لم يتغيّر** |
-| `dist/` | **لم يُبنَ ولم يُستبدل** |
+| `dist/` | ✅ أُعيد بناؤه بعد الموافقة |
 | Git | حفظ محلي فقط (لا push) — بملفات الوكيل الثالث فقط |
 | البروفايلات | لم تُفتح أثناء الفحص؛ نسخ مؤقتة معزولة حُذفت |
 | `gateway.json` | تغيّر واحد: `tencent-ai-web` → aistudio + بروفايله |

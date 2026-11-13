@@ -158,6 +158,17 @@ async function readOption(locator: DiscoveryLocator, config: DomDiscoveryConfig)
     }
   }
 
+  // Drop entries that are clearly NOT models (e.g. "upsell_MODE_CATEGORY_ULTRA").
+  if (stableId) {
+    for (const pattern of config.excludeIdPatterns || []) {
+      try {
+        if (new RegExp(pattern, 'i').test(stableId)) return null;
+      } catch {
+        /* ignore a malformed pattern */
+      }
+    }
+  }
+
   return { stableId, label, metadata, idSource };
 }
 

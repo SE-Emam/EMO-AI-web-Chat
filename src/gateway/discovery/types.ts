@@ -150,6 +150,11 @@ export interface DomDiscoveryConfig {
   optionSelectors: string[];
   /** Attributes that may hold the stable model id, most trusted first. */
   idAttributes: string[];
+  /**
+   * Patterns for ids that are NOT models (UI upsells, mode categories, …).
+   * A matching option is dropped instead of being reported as a model.
+   */
+  excludeIdPatterns?: string[];
   /** Selectors that reveal a "more models" / paginated list. */
   expandSelectors?: string[];
   /** Selectors that prove the page is a login wall. */
@@ -196,6 +201,8 @@ export interface NetworkDiscoveryConfig {
   minModels?: number;
   /** Regex every accepted id must match (keeps unrelated JSON out). */
   idPattern?: string;
+  /** Regex for ids that are NOT models (upsells, mode categories, …). */
+  excludePattern?: string;
   /**
    * Same-origin paths of the provider's own model request that can be
    * replayed from inside the page (same session, same cookies).
