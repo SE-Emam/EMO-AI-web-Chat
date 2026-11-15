@@ -142,13 +142,29 @@ curl -X POST http://127.0.0.1:8989/v1/chat/completions \
 
 EMO-AI-web includes an integrated multi-agent swarm engine that autonomously orchestrates complex software engineering tasks:
 
-### Specialized Worker Roles
+### Specialized Worker Roles & Skills Registry
 
-1. **Coordinator (`coordinator`)**: Analyzes the high-level goal, decomposes it into discrete technical slices, coordinates workers, and synthesizes final unified deliverables.
-2. **Architect (`architect`)**: Designs system blueprints, data schemas, API contracts, and computational boundaries (routed to `deepseek-r1`, `o1`, or `claude-3-7-sonnet`).
-3. **Coder (`coder`)**: Writes complete, production-grade, fully-typed code with clean error handling and zero omissions (routed to `claude-3-7-sonnet`, `gpt-4o`, or `qwen-2.5-max`).
-4. **Reviewer (`reviewer`)**: Conducts rigorous security, race-condition, vulnerability, and performance audits.
-5. **Tester (`tester`)**: Authors comprehensive unit, boundary, and integration test suites (routed to `gemini-2.0-flash` or `claude-3-5-haiku`).
+Each subagent is governed by strict, multi-paragraph **System Instructions**, explicit **Domain Skills & Methodologies**, and a mandatory **Structured Output Template** (defined in `src/server/swarm-roles.ts`):
+
+| Role | Title | Core Domain Skills | Default Fallback Models |
+|---|---|---|---|
+| **`coordinator`** | Technical Orchestrator | `task_decomposition`, `dependency_graph_resolution`, `interface_contract_enforcement`, `cross_agent_synthesis`, `gap_analysis` | `claude-3-7-sonnet`, `gpt-4o`, `gemini-2.0-flash` |
+| **`architect`** | Principal Systems Planner | `domain_data_modeling`, `api_boundary_design`, `concurrency_state_management`, `algorithmic_complexity`, `threat_modeling` | `deepseek-r1`, `o1`, `claude-3-7-sonnet` |
+| **`coder`** | Lead Implementation Engineer | `type_safe_engineering`, `defensive_error_handling`, `stream_async_io`, `clean_modular_code`, `resource_lifecycle` | `claude-3-7-sonnet`, `claude-3-5-sonnet`, `qwen-2.5-max` |
+| **`reviewer`** | Staff Security & Quality Auditor | `vulnerability_owasp_audit`, `race_condition_audit`, `memory_leak_inspection`, `invariant_verification`, `actionable_diffs` | `claude-3-7-sonnet`, `deepseek-chat`, `gpt-4o` |
+| **`tester`** | Senior QA & Test Automation Specialist | `unit_integration_test_authoring`, `boundary_edge_case_generation`, `failure_injection`, `mock_isolation`, `coverage_matrix` | `gemini-2.0-flash`, `claude-3-5-haiku`, `gpt-4o` |
+
+### Querying Swarm Roles & Skills via API
+
+Inspect active role definitions, system instructions, and skill methodologies programmatically:
+
+```bash
+# List all active roles, summaries, and skill counts
+curl -s http://127.0.0.1:8989/v1/agents/swarm/status
+
+# Retrieve complete system prompts and skill methodologies for every role
+curl -s http://127.0.0.1:8989/v1/agents/swarm/roles
+```
 
 ### Execution Modes
 

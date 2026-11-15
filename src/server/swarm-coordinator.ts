@@ -10,50 +10,11 @@ import type {
   SwarmWorkerConfig,
   SwarmWorkerRole,
 } from '../types.js';
-
-interface RoleProfile {
-  title: string;
-  systemPrompt: string;
-  fallbackModels: string[];
-}
-
-const ROLE_PROFILES: Record<SwarmWorkerRole, RoleProfile> = {
-  coordinator: {
-    title: 'Swarm Coordinator',
-    systemPrompt:
-      'You are the Swarm Coordinator. Your mission is to decompose complex goals into discrete, high-impact tasks and synthesize deliverables from specialized subagents into an integrated, production-grade solution.',
-    fallbackModels: ['claude-web:claude-3-7-sonnet', 'chatgpt-web:gpt-4o', 'gemini-web:gemini-2.0-flash', 'auto'],
-  },
-  architect: {
-    title: 'Systems & Architecture Planner',
-    systemPrompt:
-      'You are a Principal Software Architect. Focus strictly on system design, data modeling, algorithm efficiency, architectural blueprints, modularity, and operational constraints. Be precise, thorough, and concrete.',
-    fallbackModels: ['deepseek-web:deepseek-r1', 'chatgpt-web:o1', 'claude-web:claude-3-7-sonnet', 'deepseek-web:deepseek-chat', 'auto'],
-  },
-  coder: {
-    title: 'Lead Implementation Engineer',
-    systemPrompt:
-      'You are a Lead Software Engineer. Implement clean, robust, production-ready code with complete types, error handling, and optimal logic. Avoid omissions, placeholders, or hand-waving.',
-    fallbackModels: ['claude-web:claude-3-7-sonnet', 'claude-web:claude-3-5-sonnet', 'chatgpt-web:gpt-4o', 'qwen-web:qwen-2.5-max', 'auto'],
-  },
-  reviewer: {
-    title: 'Security & Quality Auditor',
-    systemPrompt:
-      'You are a Staff Security and Quality Auditor. Review the code and architecture with relentless scrutiny for security vulnerabilities (injection, auth, data leaks), race conditions, edge-case bugs, performance regressions, and maintainability.',
-    fallbackModels: ['claude-web:claude-3-7-sonnet', 'deepseek-web:deepseek-chat', 'chatgpt-web:gpt-4o', 'auto'],
-  },
-  tester: {
-    title: 'QA & Test Automation Specialist',
-    systemPrompt:
-      'You are a Senior Test Automation Engineer. Write thorough unit, integration, and property tests. Cover standard paths, boundary limits, failure recovery, and mocked external dependencies.',
-    fallbackModels: ['gemini-web:gemini-2.0-flash', 'claude-web:claude-3-5-haiku', 'chatgpt-web:gpt-4o', 'auto'],
-  },
-  custom: {
-    title: 'Specialized Task Worker',
-    systemPrompt: 'You are a specialized worker focused on executing your assigned sub-task with high precision.',
-    fallbackModels: ['chatgpt-web:gpt-4o', 'claude-web:claude-3-7-sonnet', 'auto'],
-  },
-};
+import {
+  SWARM_ROLE_PROFILES,
+  formatRolePrompt,
+  type SwarmRoleProfile,
+} from './swarm-roles.js';
 
 export class SwarmCoordinator {
   private readonly driver: ArenaDriver;
@@ -75,6 +36,20 @@ export class SwarmCoordinator {
   }
 
   /**
+   * Returns all available swarm subagent role definitions, system instructions, and skills.
+   */
+  listRoles(): SwarmRoleProfile[] {
+    return Object.values(SWARM_ROLE_PROFILES);
+  }
+
+  /**
+   * Returns profile definition for a specific role.
+   */
+  getRole(role: SwarmWorkerRole): SwarmRoleProfile {
+    return SWARM_ROLE_PROFILES[role] || SWARM_ROLE_PROFILES.custom;
+  }
+
+  /**
    * Resolves the best available model for a given worker role.
    */
   private async resolveModelForRole(role: SwarmWorkerRole, preferred?: string): Promise<string> {
@@ -89,7 +64,7 @@ export class SwarmCoordinator {
       availableModels = [];
     }
 
-    const profile = ROLE_PROFILES[role] || ROLE_PROFILES.custom;
+    const profile = SWARM_ROLE_PROFILES[role] || SWARM_ROLE_PROFILES.custom;
     for (const candidate of profile.fallbackModels) {
       if (candidate === 'auto') break;
       if (availableModels.includes(candidate)) {
@@ -115,7 +90,7 @@ export class SwarmCoordinator {
       return customWorkers.map((w, idx) => ({
         id: `slice-${idx + 1}-${randomUUID().slice(0, 8)}`,
         role: w.role,
-        name: w.name || `${ROLE_PROFILES[w.role]?.title || 'Worker'} #${idx + 1}`,
+        name: w.name || `${SWARM_ROLE_PROFILES[w.role]?.title || 'Worker'} #${idx + 1}`,
         provider: w.provider || 'auto',
         goal: w.task || goal,
         status: 'pending',
@@ -126,31 +101,31 @@ export class SwarmCoordinator {
       {
         id: `slice-1-${randomUUID().slice(0, 8)}`,
         role: 'architect',
-        name: 'Architecture & System Planner',
+        name: SWARM_ROLE_PROFILES.architect.title,
         provider: 'auto',
-        goal: `Analyze technical requirements, propose system architecture, data models, and component boundaries for: "${goal}"`,
+        goal: `Analyze architecture, formulate data schemas, define system boundaries, and identify constraints for: "${goal}"`,
         status: 'pending',
       },
       {
         id: `slice-2-${randomUUID().slice(0, 8)}`,
         role: 'coder',
-        name: 'Lead Implementation Engineer',
+        name: SWARM_ROLE_PROFILES.coder.title,
         provider: 'auto',
-        goal: `Implement complete, robust, production-quality code according to the architecture for: "${goal}"`,
+        goal: `Implement complete, robust, production-grade code adhering strictly to the architecture for: "${goal}"`,
         status: 'pending',
       },
       {
         id: `slice-3-${randomUUID().slice(0, 8)}`,
         role: 'reviewer',
-        name: 'Security & Quality Auditor',
+        name: SWARM_ROLE_PROFILES.reviewer.title,
         provider: 'auto',
-        goal: `Perform code review, security vulnerability assessment, and quality optimization for: "${goal}"`,
+        goal: `Perform a comprehensive security, vulnerability, race-condition, and code quality audit for: "${goal}"`,
         status: 'pending',
       },
       {
         id: `slice-4-${randomUUID().slice(0, 8)}`,
         role: 'tester',
-        name: 'QA & Test Engineer',
+        name: SWARM_ROLE_PROFILES.tester.title,
         provider: 'auto',
         goal: `Author comprehensive unit, integration, and boundary test cases for: "${goal}"`,
         status: 'pending',
@@ -159,7 +134,7 @@ export class SwarmCoordinator {
   }
 
   /**
-   * Executes a single worker task slice.
+   * Executes a single worker task slice with comprehensive role instructions and skills.
    */
   private async executeSlice(
     slice: SwarmTaskSlice,
@@ -185,16 +160,17 @@ export class SwarmCoordinator {
       timestamp: Date.now(),
     });
 
-    const profile = ROLE_PROFILES[slice.role] || ROLE_PROFILES.custom;
-    const extra = typeof systemInstructions === 'string' ? systemInstructions.trim() : '';
-    const systemContent = extra ? `${profile.systemPrompt}\n\n### Global System Instructions\n${extra}` : profile.systemPrompt;
+    const { systemPrompt, userPrompt } = formatRolePrompt({
+      role: slice.role,
+      taskGoal: slice.goal,
+      workerName: slice.name,
+      globalSystemInstructions: systemInstructions,
+    });
+
     const messages: ChatMessage[] = [
-      { role: 'system', content: systemContent },
+      { role: 'system', content: systemPrompt },
       ...contextHistory,
-      {
-        role: 'user',
-        content: `### Assigned Subagent Mission\n**Role:** ${slice.name}\n**Specific Task:**\n${slice.goal}\n\nPlease output your full, comprehensive findings and deliverables for this task.`,
-      },
+      { role: 'user', content: userPrompt },
     ];
 
     let fullResult = '';
@@ -212,11 +188,11 @@ export class SwarmCoordinator {
             provider: resolvedModel,
             chunk,
             timestamp: Date.now(),
-          });        },
+          });
+        },
         signal,
-        // Session key with AGENT IDENTITY (owner ruling #6): every worker of
-        // the swarm gets its OWN web chat; two workers of the same role never
-        // merge into one conversation.
+        // Session key with AGENT IDENTITY: every worker of the swarm gets its OWN web chat;
+        // two workers of the same role never merge into one conversation.
         `swarm-${swarmId}-${slice.role}-${slice.id}`
       );
 
@@ -230,13 +206,15 @@ export class SwarmCoordinator {
         taskId: slice.id,
         role: slice.role,
         provider: resolvedModel,
-        message: `Completed ${slice.name} successfully (${fullResult.length} chars).`,
+        message: `${slice.name} completed successfully (${((Date.now() - slice.startedAt) / 1000).toFixed(1)}s)`,
         timestamp: Date.now(),
       });
+
       return fullResult;
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
       slice.status = 'failed';
-      slice.error = err.message || String(err);
+      slice.error = errorMsg;
       slice.completedAt = Date.now();
 
       onEvent?.({
@@ -245,42 +223,35 @@ export class SwarmCoordinator {
         taskId: slice.id,
         role: slice.role,
         provider: resolvedModel,
-        message: `Worker ${slice.name} failed: ${slice.error}`,
+        message: `${slice.name} failed: ${errorMsg}`,
         timestamp: Date.now(),
       });
+
       throw err;
     }
   }
 
   /**
-   * Synthesizes all worker results into an integrated report.
+   * Synthesizes all completed subagent deliverables into a final unified result.
    */
   private buildSynthesis(goal: string, slices: SwarmTaskSlice[]): string {
-    const sections: string[] = [
-      `# 🌟 Swarm Execution Report: Unified Deliverable\n`,
-      `**Mission Objective:** ${goal}\n`,
-      `**Participating Subagents:** ${slices.length} specialized workers.\n`,
-      `---\n`,
-    ];
+    const sections: string[] = [];
+    sections.push(`# Autonomous Swarm Synthesis Report`);
+    sections.push(`**Goal:** ${goal}`);
+    sections.push(`**Completed Subagents:** ${slices.filter((s) => s.status === 'completed').length} / ${slices.length}\n`);
 
     for (const slice of slices) {
-      const statusIcon = slice.status === 'completed' ? '✅' : '❌';
-      sections.push(`## ${statusIcon} Subagent: ${slice.name} (${slice.role.toUpperCase()})`);
-      sections.push(`* **Model Provider:** \`${slice.provider}\``);
-      if (slice.startedAt && slice.completedAt) {
-        sections.push(`* **Execution Time:** ${((slice.completedAt - slice.startedAt) / 1000).toFixed(1)}s`);
+      sections.push(`---\n## Subagent Deliverable: ${slice.name} [@${slice.role.toUpperCase()}]`);
+      sections.push(`**Assigned Model:** \`${slice.provider}\` | **Status:** ${slice.status.toUpperCase()}`);
+      if (slice.result) {
+        sections.push(`\n${slice.result.trim()}`);
+      } else if (slice.error) {
+        sections.push(`\n> ⚠️ **Worker Execution Failed:** ${slice.error}`);
       }
       sections.push('');
-
-      if (slice.status === 'completed' && slice.result) {
-        sections.push(slice.result.trim());
-      } else if (slice.error) {
-        sections.push(`> ⚠️ **Worker Error:** ${slice.error}`);
-      }
-      sections.push('\n---\n');
     }
 
-    sections.push(`### 🏁 Summary of Accomplishments`);
+    sections.push(`---\n## Executive Summary of Accomplishments`);
     sections.push(`All specialized subagents completed their assignments in parallel orchestration.`);
     return sections.join('\n');
   }

@@ -1066,9 +1066,22 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
     return {
       status: 'active',
       service: 'swarm-coordinator',
-      roles: ['coordinator', 'architect', 'coder', 'reviewer', 'tester', 'custom'],
+      roles: swarmCoordinator.listRoles().map((r) => ({
+        role: r.role,
+        title: r.title,
+        summary: r.summary,
+        skillsCount: r.skills.length,
+        skills: r.skills.map((s) => s.name),
+        fallbackModels: r.fallbackModels,
+      })),
       modes: ['pipeline', 'parallel', 'auto'],
       activeSessions: swarmCoordinator.listSessions().length,
+    };
+  });
+
+  app.get('/v1/agents/swarm/roles', async () => {
+    return {
+      roles: swarmCoordinator.listRoles(),
     };
   });
 
