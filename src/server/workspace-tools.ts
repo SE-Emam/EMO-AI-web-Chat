@@ -543,6 +543,39 @@ export async function callWorkspaceTool(
 
     case 'create_directory': {
       const dir = resolveWorkspacePath(str('path'), ctx);
+
+      if (isSensitiveFile(dir)) {
+        throw new Error('ACCESS_DENIED: Creating sensitive credential directories is blocked.');
+      }
+
+      if (ctx.approvalManager) {
+        const approvalId = args.approval_id ? String(args.approval_id).trim() : '';
+        if (!approvalId) {
+          const req = ctx.approvalManager.createRequest({
+            toolName: 'create_directory',
+            clientIdentity: ctx.clientIdentity || 'Agent',
+            target: dir,
+            cwd: ctx.defaultRoot,
+            args,
+            details: { path: dir },
+          });
+          throw new Error(
+            `APPROVAL_REQUIRED: Operation create_directory requires approval. Approval ID: ${req.id}`
+          );
+        }
+        const ok = ctx.approvalManager.consume({
+          id: approvalId,
+          toolName: 'create_directory',
+          clientIdentity: ctx.clientIdentity || 'Agent',
+          target: dir,
+          cwd: ctx.defaultRoot,
+          args,
+        });
+        if (!ok) {
+          throw new Error(`APPROVAL_DENIED: Approval ID "${approvalId}" is invalid, expired, or already consumed.`);
+        }
+      }
+
       await fsp.mkdir(dir, { recursive: true });
       return { content: `Created directory ${dir}`, structured: { path: dir } };
     }
@@ -640,8 +673,21 @@ export async function callWorkspaceTool(
       const filePattern = args.file_pattern ? String(args.file_pattern) : null;
       const results: string[] = [];
       const realRoots = ctx.roots.map((r) => realPathForCheck(r));
+      const visitedRealPaths = new Set<string>();
 
       const walk = async (current: string): Promise<void> => {
+        if (results.length >= MAX_SEARCH_RESULTS) return;
+        let realCurrent: string;
+        try {
+          realCurrent = fs.realpathSync(current);
+        } catch {
+          return;
+        }
+        if (visitedRealPaths.has(realCurrent)) {
+          // Prevent cycle recursion
+          return;
+        }
+        visitedRealPaths.add(realCurrent);
         if (results.length >= MAX_SEARCH_RESULTS) return;
         let entries: fs.Dirent[];
         try {

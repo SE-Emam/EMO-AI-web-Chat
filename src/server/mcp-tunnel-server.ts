@@ -1,17 +1,12 @@
 /**
  * McpTunnelServer — Embedded MCP Tunnel Manager inside EMO-AI Gateway.
  *
- * Provides a built-in reverse tunnel service to expose the local MCP endpoint
- * (http://127.0.0.1:<port>/mcp) to ChatGPT and OpenAI-hosted products, supporting:
- *  1. OpenAI Platform Organization Tunnels (https://platform.openai.com/settings/organization/tunnels)
- *     - Native in-memory long-poll worker (zero external binaries or downloads)
- *     - Or managed official tunnel-client binary if installed
- *  2. Cloudflare Quick Tunnel (cloudflared — zero-config, free HTTPS trycloudflare.com endpoint)
- *  3. Ngrok tunnel
- *  4. Custom HTTPS reverse-proxy endpoint
+ * Implements official OpenAI Secure MCP Tunnel protocol (v0.0.21 / protocol.md / openapi.json)
+ * and provides isolated tunneling for Cloudflare and Ngrok via a dedicated MCP-only listener.
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
+import http from 'node:http';
 import fs from 'node:fs';
 
 export type TunnelProvider = 'cloudflared' | 'ngrok' | 'openai' | 'custom';
@@ -30,15 +25,116 @@ export interface TunnelState {
   error?: string | null;
 }
 
+export interface TunnelCommand {
+  request_id: string;
+  shard_token: string;
+  command_type: 'jsonrpc' | 'session_termination' | string;
+  channel?: string;
+  response_timeout?: number;
+  headers?: Record<string, string>;
+  jsonrpc?: unknown;
+}
+
+export interface TunnelPollResponse {
+  commands?: TunnelCommand[];
+}
+
 /**
- * Native Node.js long-poll worker implementing the OpenAI Secure MCP Tunnel client protocol.
- * Connects outbound HTTPS to api.openai.com, fetches queued MCP commands from ChatGPT,
- * forwards them to the local MCP endpoint, and delivers the response back.
- * Zero external downloads required.
+ * Dedicated loopback reverse-proxy that ONLY serves /mcp and /health.
+ * All management endpoints (/api/gateway/*), model completions (/v1/*), and UI are strictly blocked.
+ * This listener is the target for Cloudflare and Ngrok tunnels.
+ */
+export class DedicatedMcpProxy {
+  private server: http.Server | null = null;
+  public port = 0;
+
+  async start(targetMcpPort: number): Promise<number> {
+    return new Promise((resolve, reject) => {
+      this.server = http.createServer((req, res) => {
+        const url = req.url || '';
+        const pathname = url.split('?')[0];
+
+        // 1. Health check
+        if (pathname === '/health') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, status: 'healthy', service: 'mcp-tunnel-proxy' }));
+          return;
+        }
+
+        // 2. MCP Endpoint only
+        if (pathname === '/mcp' || pathname.startsWith('/mcp/')) {
+          const proxyReq = http.request(
+            {
+              hostname: '127.0.0.1',
+              port: targetMcpPort,
+              path: url,
+              method: req.method,
+              headers: {
+                ...req.headers,
+                host: `127.0.0.1:${targetMcpPort}`,
+              },
+            },
+            (proxyRes) => {
+              res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
+              proxyRes.pipe(res);
+            }
+          );
+          proxyReq.on('error', (err) => {
+            res.writeHead(502, { 'Content-Type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                error: { message: 'Failed to connect to local MCP service', details: err.message },
+              })
+            );
+          });
+          req.pipe(proxyReq);
+          return;
+        }
+
+        // 3. Strictly block all other endpoints
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            error: {
+              message: 'TUNNEL_ACCESS_DENIED: Access to management API, chat completions, and UI is forbidden over public tunnel.',
+              code: 'TUNNEL_ACCESS_DENIED',
+            },
+          })
+        );
+      });
+
+      this.server.listen(0, '127.0.0.1', () => {
+        const addr = this.server?.address();
+        if (addr && typeof addr === 'object') {
+          this.port = addr.port;
+          resolve(this.port);
+        } else {
+          reject(new Error('Failed to bind dedicated MCP proxy'));
+        }
+      });
+      this.server.on('error', reject);
+    });
+  }
+
+  stop(): void {
+    if (this.server) {
+      try {
+        this.server.close();
+      } catch {}
+      this.server = null;
+    }
+    this.port = 0;
+  }
+}
+
+/**
+ * Native Node.js long-poll worker implementing the official OpenAI Secure MCP Tunnel client protocol.
+ * Strictly adheres to protocol.md and openapi.json.
  */
 export class OpenAiTunnelPoller {
   private running = false;
   private abortController: AbortController | null = null;
+  private pollingToken: string | null = null;
 
   constructor(
     private readonly tunnelId: string,
@@ -71,81 +167,185 @@ export class OpenAiTunnelPoller {
     const pollUrl = `${base}/v1/tunnels/${encodeURIComponent(this.tunnelId)}/poll`;
     const responseUrl = `${base}/v1/tunnels/${encodeURIComponent(this.tunnelId)}/response`;
 
-    console.log(`[OpenAiTunnelPoller] Started outbound long-poll for ${this.tunnelId}`);
-
     while (this.running) {
       try {
+        const headers: Record<string, string> = {
+          Authorization: `Bearer ${this.apiKey}`,
+          Accept: 'application/json',
+          'X-Tunnel-Client-Capabilities': 'wrong-cluster-v1',
+        };
+        if (this.pollingToken) {
+          headers['X-Tunnel-Polling-Token'] = this.pollingToken;
+        }
+
         const res = await fetch(pollUrl, {
           method: 'GET',
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-            Accept: 'application/json',
-                      },
+          headers,
           signal: this.abortController?.signal,
         });
 
         if (res.status === 200) {
           this.onStateChange?.('running', null);
-          const command = (await res.json()) as any;
-          if (command && command.id && command.payload) {
-            // Forward JSON-RPC request to local gateway MCP endpoint
-            const mcpRes = await fetch(`http://127.0.0.1:${this.localMcpPort}/mcp`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                ...(this.gatewayApiKey ? { Authorization: `Bearer ${this.gatewayApiKey}` } : {}),
-              },
-              body: JSON.stringify(command.payload),
-            }).catch(() => null);
+          const newToken = res.headers.get('x-tunnel-polling-token');
+          if (newToken) this.pollingToken = newToken;
 
-            const mcpPayload = mcpRes ? await mcpRes.json().catch(() => ({})) : { error: 'Local MCP endpoint unavailable' };
+          const data = (await res.json()) as TunnelPollResponse;
+          const commands = Array.isArray(data?.commands) ? data.commands : [];
 
-            // Return execution result to ChatGPT
-            await fetch(responseUrl, {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${this.apiKey}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                id: command.id,
-                response: mcpPayload,
-              }),
-            }).catch(() => {});
+          for (const cmd of commands) {
+            await this.handleCommand(cmd, responseUrl);
           }
-        } else if (res.status === 408 || res.status === 504) {
+        } else if (res.status === 204 || res.status === 408 || res.status === 504) {
           this.onStateChange?.('running', null);
           continue;
         } else if (res.status === 401 || res.status === 403) {
           const authErr = `Authentication failed (HTTP ${res.status}). Check your OpenAI API key and tunnel permissions.`;
           this.onStateChange?.('error', authErr);
-          console.error(`[OpenAiTunnelPoller] ${authErr}`);
           await new Promise((r) => setTimeout(r, 10_000));
+        } else if (res.status === 400) {
+          // Check for wrong_cluster error
+          const errBody = await res.json().catch(() => ({}));
+          if (errBody?.error?.code === 'wrong_cluster') {
+            const redirectToken = res.headers.get('x-tunnel-polling-token');
+            if (redirectToken) {
+              this.pollingToken = redirectToken;
+            }
+          }
+          await new Promise((r) => setTimeout(r, 2_000));
         } else {
           await new Promise((r) => setTimeout(r, 3_000));
         }
       } catch (err: any) {
         if (!this.running || err?.name === 'AbortError') break;
-        await new Promise((r) => setTimeout(r, 2_000));
+        this.onStateChange?.('error', err?.message || 'Connection error');
+        await new Promise((r) => setTimeout(r, 3_000));
       }
     }
+  }
+
+  private async handleCommand(cmd: TunnelCommand, responseUrl: string): Promise<void> {
+    const receivedAt = Date.now();
+    const timeoutMs = (cmd.response_timeout ?? 30) * 1000;
+
+    // Check monotonic expiration
+    if (Date.now() - receivedAt > timeoutMs) {
+      return;
+    }
+
+    if (cmd.command_type === 'session_termination') {
+      await fetch(responseUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          'X-Tunnel-Shard-Token': cmd.shard_token,
+          'X-Tunnel-Client-Capabilities': 'wrong-cluster-v1',
+        },
+        body: JSON.stringify({
+          request_id: cmd.request_id,
+          channel: cmd.channel,
+          resp_code: 200,
+          resp_type: 'session_termination',
+          resp_headers: {},
+          resp_json: { ok: true },
+        }),
+      }).catch(() => {});
+      return;
+    }
+
+    if (cmd.command_type === 'jsonrpc') {
+      const forwardHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (this.gatewayApiKey) {
+        forwardHeaders.Authorization = `Bearer ${this.gatewayApiKey}`;
+      }
+      if (cmd.headers?.['mcp-session-id']) {
+        forwardHeaders['mcp-session-id'] = cmd.headers['mcp-session-id'];
+      }
+      if (cmd.headers?.['mcp-protocol-version']) {
+        forwardHeaders['mcp-protocol-version'] = cmd.headers['mcp-protocol-version'];
+      }
+
+      let mcpStatusCode = 200;
+      let mcpPayload: unknown;
+      try {
+        const mcpRes = await fetch(`http://127.0.0.1:${this.localMcpPort}/mcp`, {
+          method: 'POST',
+          headers: forwardHeaders,
+          body: JSON.stringify(cmd.jsonrpc),
+        });
+        mcpStatusCode = mcpRes.status;
+        mcpPayload = await mcpRes.json().catch(() => ({}));
+      } catch (e: any) {
+        mcpStatusCode = 502;
+        mcpPayload = { error: { code: -32603, message: 'Local MCP endpoint unavailable', details: e?.message } };
+      }
+
+      await fetch(responseUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          'X-Tunnel-Shard-Token': cmd.shard_token,
+          'X-Tunnel-Client-Capabilities': 'wrong-cluster-v1',
+        },
+        body: JSON.stringify({
+          request_id: cmd.request_id,
+          channel: cmd.channel,
+          resp_code: mcpStatusCode,
+          resp_type: 'jsonrpc',
+          resp_headers: {
+            'content-type': 'application/json',
+            ...(cmd.headers?.['mcp-session-id'] ? { 'mcp-session-id': cmd.headers['mcp-session-id'] } : {}),
+          },
+          resp_json: mcpPayload,
+        }),
+      }).catch(() => {});
+      return;
+    }
+
+    // Unknown command type — reject with 400
+    await fetch(responseUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+        'X-Tunnel-Shard-Token': cmd.shard_token,
+        'X-Tunnel-Client-Capabilities': 'wrong-cluster-v1',
+      },
+      body: JSON.stringify({
+        request_id: cmd.request_id,
+        channel: cmd.channel,
+        resp_code: 400,
+        resp_type: 'error',
+        resp_headers: {},
+        resp_json: { error: 'UNKNOWN_COMMAND_TYPE', command_type: cmd.command_type },
+      }),
+    }).catch(() => {});
   }
 }
 
 export class McpTunnelServer {
   private child: ChildProcess | null = null;
   private poller: OpenAiTunnelPoller | null = null;
-  private state: TunnelState = {
-    status: 'stopped',
-    provider: 'cloudflared',
-    localUrl: 'http://127.0.0.1:8989/mcp',
-    publicUrl: null,
-    publicMcpUrl: null,
-    startedAt: null,
-    error: null,
-  };
+  private dedicatedProxy: DedicatedMcpProxy | null = null;
+  private state: TunnelState;
 
-  constructor(private readonly port = 8989) {
+  constructor(private localPort: number = 8989) {
+    this.state = {
+      status: 'stopped',
+      provider: 'custom',
+      localUrl: `http://127.0.0.1:${localPort}/mcp`,
+      publicUrl: null,
+      publicMcpUrl: null,
+      startedAt: null,
+      error: null,
+    };
+  }
+
+  setLocalPort(port: number): void {
+    this.localPort = port;
     this.state.localUrl = `http://127.0.0.1:${port}/mcp`;
   }
 
@@ -154,58 +354,60 @@ export class McpTunnelServer {
   }
 
   async start(options: {
-    provider?: TunnelProvider;
+    provider: TunnelProvider;
     tunnelId?: string;
-    customUrl?: string;
+    tunnelToken?: string;
     token?: string;
-    port?: number;
+    customBaseUrl?: string;
+    customUrl?: string;
     gatewayApiKey?: string;
-  } = {}): Promise<TunnelState> {
-    const provider = options.provider || (options.tunnelId || options.customUrl ? 'openai' : 'cloudflared');
-    const port = options.port || this.port;
-    this.state.localUrl = `http://127.0.0.1:${port}/mcp`;
+    port?: number;
+  }): Promise<TunnelState> {
+    const port = options.port ?? this.localPort;
+    this.setLocalPort(port);
+    const { provider, tunnelId } = options;
+    const tunnelToken = options.tunnelToken || options.token;
+    const customBaseUrl = options.customBaseUrl || options.customUrl;
+    const gatewayApiKey = options.gatewayApiKey;
 
-    if (this.child || this.poller) {
-      await this.stop();
+    await this.stop();
+
+    // 1. OpenAI Secure Tunnel
+    if (provider === 'openai') {
+      if (!tunnelId || !tunnelToken) {
+        throw new Error('Both tunnelId and tunnelToken (OpenAI API key) are required for OpenAI tunnels.');
+      }
+
+      this.state.status = 'starting';
+      this.state.provider = 'openai';
+      this.state.tunnelId = tunnelId;
+      this.state.error = null;
+
+      const base = customBaseUrl || 'https://api.openai.com';
+      this.poller = new OpenAiTunnelPoller(
+        tunnelId,
+        tunnelToken,
+        port,
+        base,
+        gatewayApiKey,
+        (status, error) => {
+          this.state.status = status;
+          if (error !== undefined) this.state.error = error;
+        }
+      );
+      this.poller.start();
+
+      this.state.mode = 'native-poller';
+      this.state.publicMcpUrl = `openai-tunnel://${tunnelId}`;
+      this.state.publicUrl = `https://platform.openai.com/settings/organization/tunnels`;
+      this.state.startedAt = Date.now();
+      return this.getState();
     }
 
-    // Custom or OpenAI Tunnel provided
-    if (provider === 'openai' || provider === 'custom' || options.customUrl || options.tunnelId) {
-      const tunnelId = options.tunnelId ? String(options.tunnelId).trim() : null;
-      const base = String(options.customUrl || (tunnelId ? `https://api.openai.com/v1/mcp/${tunnelId}` : '')).trim();
-
-      if (!base && !tunnelId) {
-        throw new Error('Please provide the tunnel endpoint URL or tunnelId from OpenAI Platform (https://platform.openai.com/settings/organization/tunnels).');
-      }
-
-      const publicMcpUrl = tunnelId ? base : (base.endsWith('/mcp') ? base : `${base.replace(/\/$/, '')}/mcp`);
-
-      if (tunnelId && options.token) {
-        this.state = {
-          status: 'starting',
-          provider,
-          localUrl: this.state.localUrl,
-          publicUrl: base,
-          publicMcpUrl,
-          startedAt: Date.now(),
-          tunnelId,
-          mode: 'native-poller',
-          error: null,
-        };
-        this.poller = new OpenAiTunnelPoller(
-          tunnelId,
-          options.token,
-          port,
-          undefined,
-          options.gatewayApiKey,
-          (status, error) => {
-            this.state.status = status;
-            if (error !== undefined) this.state.error = error;
-          }
-        );
-        this.poller.start();
-        return this.getState();
-      }
+    // 2. Custom Proxy Mode
+    if (provider === 'custom') {
+      const base = customBaseUrl?.replace(/\/$/, '') || null;
+      const publicMcpUrl = base ? `${base}/mcp` : null;
 
       this.state = {
         status: 'running',
@@ -221,10 +423,14 @@ export class McpTunnelServer {
       return this.getState();
     }
 
-    // Automated Cloudflare or Ngrok Tunnel
+    // 3. Automated Cloudflare or Ngrok Tunnel with Dedicated MCP-Only Loopback Proxy
     this.state.status = 'starting';
     this.state.provider = provider;
     this.state.error = null;
+
+    // Spin up the isolated proxy listener for Cloudflare/Ngrok
+    this.dedicatedProxy = new DedicatedMcpProxy();
+    const proxyPort = await this.dedicatedProxy.start(port);
 
     return new Promise<TunnelState>((resolve, reject) => {
       let resolved = false;
@@ -240,7 +446,9 @@ export class McpTunnelServer {
       const findBin = (name: string): string => {
         const paths = [`/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`, `/usr/bin/${name}`];
         for (const p of paths) {
-          try { if (fs.existsSync(p)) return p; } catch {}
+          try {
+            if (fs.existsSync(p)) return p;
+          } catch {}
         }
         return name;
       };
@@ -248,12 +456,12 @@ export class McpTunnelServer {
       try {
         if (provider === 'cloudflared') {
           const bin = findBin('cloudflared');
-          this.child = spawn(bin, ['tunnel', '--url', `http://127.0.0.1:${port}`], {
+          this.child = spawn(bin, ['tunnel', '--url', `http://127.0.0.1:${proxyPort}`], {
             stdio: ['ignore', 'pipe', 'pipe'],
           });
         } else if (provider === 'ngrok') {
           const bin = findBin('ngrok');
-          this.child = spawn(bin, ['http', String(port), '--log=stdout'], {
+          this.child = spawn(bin, ['http', String(proxyPort), '--log=stdout'], {
             stdio: ['ignore', 'pipe', 'pipe'],
           });
         } else {
@@ -265,7 +473,6 @@ export class McpTunnelServer {
 
         const handleOutput = (chunk: Buffer) => {
           const text = chunk.toString();
-          // Cloudflare regex: https://[a-zA-Z0-9-]+\.trycloudflare\.com
           const cfMatch = text.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/i);
           if (cfMatch && !resolved) {
             resolved = true;
@@ -276,11 +483,9 @@ export class McpTunnelServer {
             this.state.publicMcpUrl = `${pub}/mcp`;
             this.state.startedAt = Date.now();
             this.state.mode = 'cloudflared';
-            console.log(`[McpTunnelServer] Cloudflare Tunnel running: ${this.state.publicMcpUrl}`);
             resolve(this.getState());
             return;
           }
-          // Ngrok regex: url=(https:\/\/[^\s]+)
           const ngrokMatch = text.match(/url=(https:\/\/[a-zA-Z0-9.-]+\.ngrok[^\s]+)/i);
           if (ngrokMatch && !resolved) {
             resolved = true;
@@ -291,7 +496,6 @@ export class McpTunnelServer {
             this.state.publicMcpUrl = `${pub}/mcp`;
             this.state.startedAt = Date.now();
             this.state.mode = 'ngrok';
-            console.log(`[McpTunnelServer] Ngrok Tunnel running: ${this.state.publicMcpUrl}`);
             resolve(this.getState());
             return;
           }
@@ -342,6 +546,10 @@ export class McpTunnelServer {
     if (this.poller) {
       this.poller.stop();
       this.poller = null;
+    }
+    if (this.dedicatedProxy) {
+      this.dedicatedProxy.stop();
+      this.dedicatedProxy = null;
     }
     this.state = {
       status: 'stopped',

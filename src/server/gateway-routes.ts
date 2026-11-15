@@ -1,4 +1,5 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { globalHumanSessionManager, type HumanSession } from './human-session.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -2165,6 +2166,126 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
     }
   });
 
+  function parseCookies(header?: string): Record<string, string> {
+    const result: Record<string, string> = {};
+    if (!header || typeof header !== 'string') return result;
+    const parts = header.split(';');
+    for (const part of parts) {
+      const idx = part.indexOf('=');
+      if (idx > 0) {
+        const key = part.slice(0, idx).trim();
+        const val = part.slice(idx + 1).trim();
+        result[key] = decodeURIComponent(val);
+      }
+    }
+    return result;
+  }
+
+  function extractHumanSession(req: FastifyRequest): HumanSession | null {
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionToken = cookies['emo_session_id'] || (typeof req.headers['x-session-token'] === 'string' ? req.headers['x-session-token'].trim() : undefined);
+    if (!sessionToken) return null;
+    return globalHumanSessionManager.getSession(sessionToken);
+  }
+
+  function authenticateHumanSession(req: FastifyRequest): { ok: boolean; session?: HumanSession; error?: string; status?: number } {
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionToken = cookies['emo_session_id'] || (typeof req.headers['x-session-token'] === 'string' ? req.headers['x-session-token'].trim() : undefined);
+    if (!sessionToken) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'HUMAN_SESSION_REQUIRED: Approval actions require an active, authenticated local human session. Agents and API keys cannot self-approve operations.',
+      };
+    }
+
+    const session = globalHumanSessionManager.getSession(sessionToken);
+    if (!session) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'HUMAN_SESSION_EXPIRED: The local human session is invalid or expired. Please log in again.',
+      };
+    }
+
+    // Strict CSRF verification for state-changing approval operations
+    const csrfHeader = (req.headers['x-csrf-token'] || req.headers['x-csrftoken']) as string | undefined;
+    if (!globalHumanSessionManager.validateCsrf(session, csrfHeader)) {
+      return {
+        ok: false,
+        status: 403,
+        error: 'CSRF_VALIDATION_FAILED: Invalid or missing CSRF token on state-changing approval request.',
+      };
+    }
+
+    return { ok: true, session };
+  }
+
+  // --- Human Session Authentication Endpoints ---
+  app.post('/api/gateway/session/login', async (req, reply) => {
+    const body = (req.body || {}) as { apiKey?: string };
+    
+    let isAdmin = false;
+    if (body.apiKey && opts.manager && typeof (opts.manager as any).resolveKeyAuth === 'function') {
+      const auth = (opts.manager as any).resolveKeyAuth(body.apiKey);
+      if (auth.valid && (auth.scope === 'admin' || auth.scope === 'all')) {
+        isAdmin = true;
+      }
+    } else if ((req as any).authKeyInfo?.valid && ((req as any).authKeyInfo?.scope === 'admin' || (req as any).authKeyInfo?.scope === 'all')) {
+      isAdmin = true;
+    }
+
+    if (!isAdmin) {
+      return reply.status(401).send({
+        error: {
+          message: 'INVALID_CREDENTIALS: An admin-scoped API key is required to bootstrap a local human session.',
+          code: 'AUTH_FAILED',
+        },
+      });
+    }
+
+    const session = globalHumanSessionManager.createSession('human:local_operator');
+    const isSecure = req.protocol === 'https';
+    reply.header(
+      'Set-Cookie',
+      `emo_session_id=${session.id}; Path=/api/gateway/; HttpOnly; SameSite=Strict${isSecure ? '; Secure' : ''}; Max-Age=3600`
+    );
+
+    return {
+      ok: true,
+      sessionId: session.id,
+      csrfToken: session.csrfToken,
+      actor: session.actor,
+      expiresAt: session.expiresAt,
+    };
+  });
+
+  app.post('/api/gateway/session/logout', async (req, reply) => {
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionToken = cookies['emo_session_id'] || (typeof req.headers['x-session-token'] === 'string' ? req.headers['x-session-token'].trim() : undefined);
+    if (sessionToken) {
+      globalHumanSessionManager.destroySession(sessionToken);
+    }
+    reply.header(
+      'Set-Cookie',
+      'emo_session_id=; Path=/api/gateway/; HttpOnly; SameSite=Strict; Max-Age=0'
+    );
+    return { ok: true };
+  });
+
+  app.get('/api/gateway/session/me', async (req) => {
+    const session = extractHumanSession(req);
+    if (!session) {
+      return { authenticated: false };
+    }
+    return {
+      authenticated: true,
+      actor: session.actor,
+      csrfToken: session.csrfToken,
+      expiresAt: session.expiresAt,
+    };
+  });
+
   // --- Centralized Approval Manager Routes ---
   app.get('/api/gateway/approvals', async (req) => {
     const q = (req.query || {}) as { status?: string };
@@ -2183,10 +2304,13 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
 
   app.post('/api/gateway/approvals/:id/approve', async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = authenticateHumanSession(req);
+    if (!auth.ok || !auth.session) {
+      return reply.status(auth.status || 401).send({ error: { message: auth.error } });
+    }
+
     try {
-      const keyId = (req as any).authKeyInfo?.keyId || 'local_admin';
-      const actor = `admin:${keyId}`;
-      const result = globalApprovalManager.approve(id, actor);
+      const result = globalApprovalManager.approve(id, auth.session.actor);
       return { ok: true, approval: result };
     } catch (e) {
       return reply.status(400).send({ error: { message: (e as Error).message } });
@@ -2195,10 +2319,13 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
 
   app.post('/api/gateway/approvals/:id/reject', async (req, reply) => {
     const { id } = req.params as { id: string };
+    const auth = authenticateHumanSession(req);
+    if (!auth.ok || !auth.session) {
+      return reply.status(auth.status || 401).send({ error: { message: auth.error } });
+    }
+
     try {
-      const keyId = (req as any).authKeyInfo?.keyId || 'local_admin';
-      const actor = `admin:${keyId}`;
-      const result = globalApprovalManager.reject(id, actor);
+      const result = globalApprovalManager.reject(id, auth.session.actor);
       return { ok: true, approval: result };
     } catch (e) {
       return reply.status(400).send({ error: { message: (e as Error).message } });

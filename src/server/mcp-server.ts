@@ -258,7 +258,10 @@ export function registerMcpServer(app: FastifyInstance, opts: McpServerOptions =
     const body = (req.body || {}) as any;
     const messages: any[] = Array.isArray(body) ? body : [body];
     const responses: any[] = [];
-    const clientIdentity = String(req.headers['x-client-agent'] || req.headers['user-agent'] || 'Agent');
+    const authKeyInfo = (req as any).authKeyInfo as KeyAuthResult | undefined;
+    const clientIdentity = authKeyInfo?.keyId ? `key:${authKeyInfo.keyId}` : 'unauthenticated_mcp_client';
+    const displayAgent = String(req.headers['x-client-agent'] || req.headers['user-agent'] || 'Agent');
+    void displayAgent;
 
     for (const message of messages) {
       if (!message || typeof message !== 'object') continue;

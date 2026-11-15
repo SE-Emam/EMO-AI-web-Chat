@@ -5,7 +5,7 @@ import type { ArenaDriver, ChatMessage } from '../types.js';
 import type { ApiKeyItem, KeyAuthResult, CustomAgent, CustomUpstreamProvider, GatewayConfigFile, ProviderAccount, ProviderAuthInfo, ProviderConfig, ProviderDiscoveryState, ProviderDiscoveryStatus, ProviderMetaState, ProviderRuntimeState, ProviderStatus, RouterGroup, RouterGroupTarget, WebProviderId } from './types.js';
 import { WEB_PROVIDER_IDS } from './types.js';
 import { matchesProvider, providerSpec } from '../arena/providers.js';
-import type { GatewayConfigStore } from './config-store.js';
+import { isLegacyInsecureKey, type GatewayConfigStore } from './config-store.js';
 import { BrowserManager, cleanupStaleProfileLocks } from '../browser/manager.js';
 import { DefaultArenaDriver } from '../arena/driver.js';
 import { ZaiWebDriver } from '../arena/zai-web-driver.js';
@@ -1916,7 +1916,7 @@ export class ProviderManager {
     return [...(this.config.gateway.apiKeys || [])];
   }
 
-  async addApiKey(name: string, customKey?: string): Promise<ApiKeyItem> {
+  async addApiKey(name: string, customKey?: string, scope: 'admin' | 'mcp' | 'group' | 'all' = 'admin'): Promise<ApiKeyItem> {
     if (!Array.isArray(this.config.gateway.apiKeys)) this.config.gateway.apiKeys = [];
     const id = 'key_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
     const key = customKey && customKey.trim()
@@ -1926,6 +1926,7 @@ export class ProviderManager {
       id,
       name: name.trim() || 'API Key ' + (this.config.gateway.apiKeys.length + 1),
       key,
+      scope,
       createdAt: new Date().toISOString(),
       enabled: true,
     };
@@ -1937,6 +1938,25 @@ export class ProviderManager {
   async deleteApiKey(id: string): Promise<boolean> {
     if (!Array.isArray(this.config.gateway.apiKeys)) return false;
     const initialLen = this.config.gateway.apiKeys.length;
+    const item = this.config.gateway.apiKeys.find((k) => k.id === id);
+    if (!item) return false;
+
+    // Track in revoked keys list
+    const gw = this.config.gateway as any;
+    gw.revokedKeys = gw.revokedKeys || [];
+    if (item.key && !gw.revokedKeys.includes(item.key)) {
+      gw.revokedKeys.push(item.key);
+    }
+
+    // Synchronize if this was the master admin key or default mcp key
+    if (item.key === this.config.gateway.adminApiKey || item.key === this.config.gateway.apiKey) {
+      this.config.gateway.adminApiKey = "";
+      this.config.gateway.apiKey = "";
+    }
+    if (item.key === this.config.gateway.mcpApiKey) {
+      this.config.gateway.mcpApiKey = "";
+    }
+
     this.config.gateway.apiKeys = this.config.gateway.apiKeys.filter((k) => k.id !== id);
     if (this.config.gateway.apiKeys.length !== initialLen) {
       await this.saveConfig();
@@ -1955,69 +1975,125 @@ export class ProviderManager {
   }
 
   resolveKeyAuth(providedKey?: string): KeyAuthResult {
-    if (!providedKey || typeof providedKey !== 'string') {
-      return { valid: false, scope: 'group', error: 'KEY_INVALID' };
+    if (!providedKey || typeof providedKey !== "string") {
+      return { valid: false, scope: "group", error: "KEY_INVALID" };
     }
     const clean = providedKey.trim();
     if (!clean) {
-      return { valid: false, scope: 'group', error: 'KEY_INVALID' };
+      return { valid: false, scope: "group", error: "KEY_INVALID" };
     }
 
-    // 1. Master Admin Key
-    const masterAdmin = String(this.config.gateway.adminApiKey || this.config.gateway.apiKey || '').trim();
-    if (masterAdmin && clean === masterAdmin) {
-      return { valid: true, keyId: 'key-admin', scope: 'admin' };
+    // Explicitly reject legacy insecure keys and revoked keys
+    if (isLegacyInsecureKey(clean)) {
+      return { valid: false, scope: "group", error: "KEY_INVALID" };
+    }
+    const revoked = (this.config.gateway as any).revokedKeys;
+    if (Array.isArray(revoked) && revoked.includes(clean)) {
+      return { valid: false, scope: "group", error: "KEY_INVALID" };
     }
 
-    // 2. Default MCP Client Key
-    const mcpKey = String(this.config.gateway.mcpApiKey || '').trim();
-    if (mcpKey && clean === mcpKey) {
-      return { valid: true, keyId: 'key-mcp-default', scope: 'mcp' };
-    }
-
-    // 3. Registered API Keys in config.gateway.apiKeys
+    // 1. Registered API Keys in config.gateway.apiKeys (checked with strict expiration and explicit scopes)
     if (Array.isArray(this.config.gateway.apiKeys)) {
-      const match = this.config.gateway.apiKeys.find((k) => String(k.key || '').trim() === clean);
+      const match = this.config.gateway.apiKeys.find((k) => String(k.key || "").trim() === clean);
       if (match) {
-        const scope = match.scope || 'admin';
-        if (match.enabled === false) {
-          return { valid: false, keyId: match.id, scope, error: 'KEY_DISABLED' };
+        // Scope must be explicit and known. Never default missing scopes to admin!
+        if (!match.scope || !["admin", "mcp", "group", "all"].includes(match.scope)) {
+          return { valid: false, keyId: match.id, scope: "group", error: "KEY_INVALID" };
         }
-        return { valid: true, keyId: match.id, scope };
+        if (match.enabled === false) {
+          return { valid: false, keyId: match.id, scope: match.scope, error: "KEY_DISABLED" };
+        }
+        // Active expiration check
+        if (match.expiresAt) {
+          const exp = new Date(match.expiresAt).getTime();
+          if (isNaN(exp) || Date.now() >= exp) {
+            return { valid: false, keyId: match.id, scope: match.scope, error: "KEY_EXPIRED" };
+          }
+        }
+        return { valid: true, keyId: match.id, scope: match.scope };
       }
+    }
+
+    // 2. Master Admin Key
+    const masterAdmin = String(this.config.gateway.adminApiKey || this.config.gateway.apiKey || "").trim();
+    if (masterAdmin && clean === masterAdmin) {
+      // Check if entry in apiKeys for key-admin exists and is disabled/expired
+      if (Array.isArray(this.config.gateway.apiKeys)) {
+        const adminEntry = this.config.gateway.apiKeys.find((k) => k.id === "key-admin");
+        if (adminEntry) {
+          if (adminEntry.enabled === false) {
+            return { valid: false, keyId: "key-admin", scope: "admin", error: "KEY_DISABLED" };
+          }
+          if (adminEntry.expiresAt) {
+            const exp = new Date(adminEntry.expiresAt).getTime();
+            if (isNaN(exp) || Date.now() >= exp) {
+              return { valid: false, keyId: "key-admin", scope: "admin", error: "KEY_EXPIRED" };
+            }
+          }
+        }
+      }
+      return { valid: true, keyId: "key-admin", scope: "admin" };
+    }
+
+    // 3. Default MCP Client Key
+    const mcpKey = String(this.config.gateway.mcpApiKey || "").trim();
+    if (mcpKey && clean === mcpKey) {
+      if (Array.isArray(this.config.gateway.apiKeys)) {
+        const mcpEntry = this.config.gateway.apiKeys.find((k) => k.id === "key-mcp-default");
+        if (mcpEntry) {
+          if (mcpEntry.enabled === false) {
+            return { valid: false, keyId: "key-mcp-default", scope: "mcp", error: "KEY_DISABLED" };
+          }
+          if (mcpEntry.expiresAt) {
+            const exp = new Date(mcpEntry.expiresAt).getTime();
+            if (isNaN(exp) || Date.now() >= exp) {
+              return { valid: false, keyId: "key-mcp-default", scope: "mcp", error: "KEY_EXPIRED" };
+            }
+          }
+        }
+      }
+      return { valid: true, keyId: "key-mcp-default", scope: "mcp" };
     }
 
     // 4. Scoped Router Groups
     if (Array.isArray(this.config.routerGroups)) {
-      const matchGroup = this.config.routerGroups.find((g) => String((g as any).apiKey || '').trim() === clean);
+      const matchGroup = this.config.routerGroups.find((g) => String((g as any).apiKey || "").trim() === clean);
       if (matchGroup) {
         if (matchGroup.enabled === false) {
-          return { valid: false, keyId: `group-${matchGroup.id}`, scope: 'group', scopedGroup: matchGroup, error: 'KEY_DISABLED' };
+          return { valid: false, keyId: `group-${matchGroup.id}`, scope: "group", scopedGroup: matchGroup, error: "KEY_DISABLED" };
         }
-        return { valid: true, keyId: `group-${matchGroup.id}`, scope: 'group', scopedGroup: matchGroup };
+        return { valid: true, keyId: `group-${matchGroup.id}`, scope: "group", scopedGroup: matchGroup };
       }
     }
 
-    return { valid: false, scope: 'group', error: 'KEY_INVALID' };
+    return { valid: false, scope: "group", error: "KEY_INVALID" };
   }
 
   getValidApiKeys(): string[] {
     const keys: string[] = [];
-    const masterKey = String(this.config.gateway.apiKey || '').trim();
-    if (masterKey) keys.push(masterKey);
+    const masterKey = String(this.config.gateway.apiKey || "").trim();
+    if (masterKey && !isLegacyInsecureKey(masterKey)) keys.push(masterKey);
     if (Array.isArray(this.config.gateway.apiKeys)) {
       for (const k of this.config.gateway.apiKeys) {
-        const cleanKey = String(k.key || '').trim();
-        if (k.enabled && cleanKey && !keys.includes(cleanKey)) {
-          keys.push(cleanKey);
+        const cleanKey = String(k.key || "").trim();
+        if (k.enabled && cleanKey && !isLegacyInsecureKey(cleanKey)) {
+          if (k.expiresAt) {
+            const exp = new Date(k.expiresAt).getTime();
+            if (isNaN(exp) || Date.now() >= exp) continue;
+          }
+          if (["admin", "mcp", "group", "all"].includes(k.scope as string) && !keys.includes(cleanKey)) {
+            keys.push(cleanKey);
+          }
         }
       }
     }
     if (Array.isArray(this.config.routerGroups)) {
       for (const g of this.config.routerGroups) {
         if (g.enabled === false) continue;
-        const gk = String((g as any).apiKey || '').trim();
-        if (gk && !keys.includes(gk)) keys.push(gk);
+        const gk = String((g as any).apiKey || "").trim();
+        if (gk && !isLegacyInsecureKey(gk) && !keys.includes(gk)) {
+          keys.push(gk);
+        }
       }
     }
     return keys;

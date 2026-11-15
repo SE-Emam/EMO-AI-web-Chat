@@ -22,6 +22,15 @@ export interface ExecCommandResult {
   truncated?: boolean;
 }
 
+export interface CommandPolicyMetadata {
+  safe: boolean;
+  reason?: string;
+  executesCode?: boolean;
+  usesNetwork?: boolean;
+  installsDependencies?: boolean;
+  runsHooksOrScripts?: boolean;
+}
+
 const ALLOWED_EXECUTABLES = new Set([
   'git',
   'npm',
@@ -30,9 +39,6 @@ const ALLOWED_EXECUTABLES = new Set([
   'tsc',
   'python3',
   'python',
-  'cargo',
-  'go',
-  'make',
   'echo',
   'ls',
   'cat',
@@ -58,10 +64,10 @@ const MAX_BUFFER_BYTES = 500_000; // 500 KB limit in bytes
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
 
-export function validateCommandSafety(command: string, args: string[]): { safe: boolean; reason?: string } {
+export function validateCommandSafety(command: string, args: string[]): CommandPolicyMetadata {
   const baseCmd = path.basename(command).toLowerCase();
 
-  // 1. Check Allowlist
+  // 1. Check Allowlist first
   if (!ALLOWED_EXECUTABLES.has(baseCmd)) {
     return {
       safe: false,
@@ -78,6 +84,123 @@ export function validateCommandSafety(command: string, args: string[]): { safe: 
   }
 
   // 3. Subcommand and argument safety policies
+  if (baseCmd === 'git') {
+    const dangerousGitFlags = ['--upload-pack', '--receive-pack', '--exec-path', '--config-env'];
+    for (const a of args) {
+      if (dangerousGitFlags.some((f) => a.startsWith(f))) {
+        return { safe: false, reason: `SECURITY_VIOLATION: Dangerous git flag "${a}" is prohibited.` };
+      }
+      if (a === '-c' || a.startsWith('-c=')) {
+        return { safe: false, reason: 'SECURITY_VIOLATION: Passing arbitrary git -c configuration overrides is prohibited.' };
+      }
+      if (a === 'config') {
+        return { safe: false, reason: 'SECURITY_VIOLATION: Modifying git configuration via terminal is prohibited.' };
+      }
+    }
+
+    const sub = (args[0] || '').toLowerCase();
+    const allowedGitSubs = ['status', 'diff', 'log', 'branch', 'rev-parse', 'show', 'tag', 'describe', 'remote', 'ls-remote'];
+    if (sub && !allowedGitSubs.includes(sub)) {
+      return { safe: false, reason: `SECURITY_VIOLATION: Git subcommand "${sub}" is not in the approved safe list.` };
+    }
+
+    const usesNetwork = sub === 'remote' || sub === 'ls-remote' || args.includes('ls-remote');
+    return {
+      safe: true,
+      executesCode: false,
+      usesNetwork,
+      installsDependencies: false,
+      runsHooksOrScripts: false,
+    };
+  }
+
+  if (baseCmd === 'npm') {
+    const sub = (args[0] || '').toLowerCase();
+    const sub2 = (args[1] || '').toLowerCase();
+
+    if (sub === 'exec') {
+      return { safe: false, reason: 'SECURITY_VIOLATION: npm exec arbitrary package execution is prohibited.' };
+    }
+    if (sub === 'init') {
+      return { safe: false, reason: 'SECURITY_VIOLATION: npm init is prohibited.' };
+    }
+
+    if (sub === 'test' || (sub === 'run' && sub2 === 'test')) {
+      return {
+        safe: true,
+        executesCode: true,
+        usesNetwork: false,
+        installsDependencies: false,
+        runsHooksOrScripts: true,
+      };
+    }
+    if (sub === 'run' && sub2 === 'typecheck') {
+      return {
+        safe: true,
+        executesCode: true,
+        usesNetwork: false,
+        installsDependencies: false,
+        runsHooksOrScripts: false,
+      };
+    }
+    if (sub === 'run' && sub2 === 'build') {
+      return {
+        safe: true,
+        executesCode: true,
+        usesNetwork: false,
+        installsDependencies: false,
+        runsHooksOrScripts: true,
+      };
+    }
+    if (sub === 'run' && sub2 === 'lint') {
+      return {
+        safe: true,
+        executesCode: true,
+        usesNetwork: false,
+        installsDependencies: false,
+        runsHooksOrScripts: false,
+      };
+    }
+    if (sub === 'ci' || sub === 'install') {
+      return {
+        safe: true,
+        executesCode: true,
+        usesNetwork: true,
+        installsDependencies: true,
+        runsHooksOrScripts: true,
+      };
+    }
+
+    return {
+      safe: false,
+      reason: `SECURITY_VIOLATION: Arbitrary npm script execution ("${args.join(' ')}") is prohibited by policy.`,
+    };
+  }
+
+  if (baseCmd === 'npx') {
+    return { safe: false, reason: 'SECURITY_VIOLATION: npx arbitrary package execution is prohibited.' };
+  }
+
+  if (baseCmd === 'tsc') {
+    return {
+      safe: true,
+      executesCode: false,
+      usesNetwork: false,
+      installsDependencies: false,
+      runsHooksOrScripts: false,
+    };
+  }
+
+  if (baseCmd === 'echo' || baseCmd === 'pwd' || baseCmd === 'ls' || baseCmd === 'cat' || baseCmd === 'grep' || baseCmd === 'find') {
+    return {
+      safe: true,
+      executesCode: false,
+      usesNetwork: false,
+      installsDependencies: false,
+      runsHooksOrScripts: false,
+    };
+  }
+
   if (baseCmd === 'node') {
     for (const a of args) {
       if (a === '-e' || a === '--eval' || a === '-p' || a === '--print') {
@@ -87,6 +210,10 @@ export function validateCommandSafety(command: string, args: string[]): { safe: 
         };
       }
     }
+    return {
+      safe: false,
+      reason: 'SECURITY_VIOLATION: Arbitrary script execution (node <script>) is prohibited by policy.',
+    };
   }
 
   if (baseCmd === 'python' || baseCmd === 'python3') {
@@ -98,32 +225,16 @@ export function validateCommandSafety(command: string, args: string[]): { safe: 
         };
       }
     }
+    return {
+      safe: false,
+      reason: 'SECURITY_VIOLATION: Arbitrary script execution (python <script>) is prohibited by policy.',
+    };
   }
 
-  if (baseCmd === 'git') {
-    const dangerousGitFlags = ['--upload-pack', '--receive-pack', '--exec-path'];
-    for (const a of args) {
-      if (dangerousGitFlags.some((f) => a.startsWith(f))) {
-        return { safe: false, reason: `SECURITY_VIOLATION: Dangerous git flag "${a}" is prohibited.` };
-      }
-      if (a === 'config') {
-        return { safe: false, reason: 'SECURITY_VIOLATION: Modifying git configuration via terminal is prohibited.' };
-      }
-    }
-  }
-
-  if (baseCmd === 'npm') {
-    const dangerousNpmSubcommands = ['exec', 'init'];
-    if (args.length > 0 && dangerousNpmSubcommands.includes(args[0])) {
-      return { safe: false, reason: `SECURITY_VIOLATION: npm subcommand "${args[0]}" is prohibited.` };
-    }
-  }
-
-  if (baseCmd === 'npx') {
-    return { safe: false, reason: 'SECURITY_VIOLATION: npx arbitrary package execution is prohibited.' };
-  }
-
-  return { safe: true };
+  return {
+    safe: false,
+    reason: `COMMAND_NOT_ALLOWED: "${baseCmd}" is not in the allowed executables list or violates safety policy.`,
+  };
 }
 
 export function sanitizeEnv(baseEnv: NodeJS.ProcessEnv = process.env): Record<string, string> {
@@ -178,6 +289,17 @@ export class TerminalService {
 
     const targetDescription = `${baseCmd} ${args.join(' ')}`.trim();
 
+    const approvalDetails = {
+      command: baseCmd,
+      args,
+      cwd: validatedCwd,
+      affectedPaths: [validatedCwd],
+      executesCode: safety.executesCode ?? false,
+      usesNetwork: safety.usesNetwork ?? false,
+      installsDependencies: safety.installsDependencies ?? false,
+      runsHooksOrScripts: safety.runsHooksOrScripts ?? false,
+    };
+
     // Enforce Approval
     const approvalId = params.approval_id ? String(params.approval_id).trim() : '';
     if (!approvalId) {
@@ -187,7 +309,7 @@ export class TerminalService {
         target: targetDescription,
         cwd: validatedCwd,
         args: { command: baseCmd, args, working_directory: validatedCwd },
-        details: { command: baseCmd, args, cwd: validatedCwd },
+        details: approvalDetails,
       });
 
       throw new Error(
@@ -218,6 +340,8 @@ export class TerminalService {
     const start = Date.now();
 
     return new Promise<ExecCommandResult>((resolve, reject) => {
+      let stdoutBytes = 0;
+      let stderrBytes = 0;
       let stdoutBuffer = '';
       let stderrBuffer = '';
       let truncated = false;
@@ -227,36 +351,66 @@ export class TerminalService {
         cwd: validatedCwd,
         env: sanitizeEnv(),
         shell: false, // CRITICAL: NEVER shell: true!
+        detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
+      const killProcessTree = (signal: NodeJS.Signals = 'SIGTERM') => {
+        if (!child.pid) return;
+        try {
+          process.kill(-child.pid, signal);
+        } catch {
+          try {
+            child.kill(signal);
+          } catch {}
+        }
+      };
+
       const timer = setTimeout(() => {
         killed = true;
-        child.kill('SIGTERM');
+        killProcessTree('SIGTERM');
         setTimeout(() => {
-          if (!child.killed) child.kill('SIGKILL');
-        }, 2_000);
+          killProcessTree('SIGKILL');
+        }, 1_500);
       }, timeoutMs);
 
       child.stdout.on('data', (chunk: Buffer) => {
-        const currentBytes = Buffer.byteLength(stdoutBuffer, 'utf8');
-        if (currentBytes < MAX_BUFFER_BYTES) {
-          stdoutBuffer += chunk.toString('utf8');
-          if (Buffer.byteLength(stdoutBuffer, 'utf8') >= MAX_BUFFER_BYTES) {
-            stdoutBuffer += '\n[truncated: max buffer exceeded]';
+        if (stdoutBytes >= MAX_BUFFER_BYTES) {
+          if (!truncated) {
             truncated = true;
+            stdoutBuffer += '\n[truncated: max buffer exceeded]';
           }
+          child.stdout.pause();
+          return;
+        }
+        const remaining = MAX_BUFFER_BYTES - stdoutBytes;
+        const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+        stdoutBuffer += slice.toString('utf8');
+        stdoutBytes += slice.length;
+        if (chunk.length > remaining) {
+          truncated = true;
+          stdoutBuffer += '\n[truncated: max buffer exceeded]';
+          child.stdout.pause();
         }
       });
 
       child.stderr.on('data', (chunk: Buffer) => {
-        const currentBytes = Buffer.byteLength(stderrBuffer, 'utf8');
-        if (currentBytes < MAX_BUFFER_BYTES) {
-          stderrBuffer += chunk.toString('utf8');
-          if (Buffer.byteLength(stderrBuffer, 'utf8') >= MAX_BUFFER_BYTES) {
-            stderrBuffer += '\n[truncated: max buffer exceeded]';
+        if (stderrBytes >= MAX_BUFFER_BYTES) {
+          if (!truncated) {
             truncated = true;
+            stderrBuffer += '\n[truncated: max buffer exceeded]';
           }
+          child.stderr.pause();
+          return;
+        }
+        const remaining = MAX_BUFFER_BYTES - stderrBytes;
+        const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+        stderrBuffer += slice.toString('utf8');
+        stderrBytes += slice.length;
+        if (chunk.length > remaining) {
+          truncated = true;
+          stderrBuffer += '\n[truncated: max buffer exceeded]';
+          child.stderr.pause();
         }
       });
 

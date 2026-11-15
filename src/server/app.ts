@@ -15,6 +15,7 @@ import {
 import type { GatewayConfigFile, KeyAuthResult } from '../gateway/types.js';
 import type { ProviderManager } from '../gateway/provider-manager.js';
 import type { UsageTracker } from '../gateway/usage-tracker.js';
+import { globalHumanSessionManager } from './human-session.js';
 import { registerGatewayRoutes } from './gateway-routes.js';
 import { registerGatewayUi } from '../gateway/ui.js';
 import { registerAnthropicRoutes } from './anthropic-routes.js';
@@ -137,6 +138,21 @@ function getApiKey(req: FastifyRequest): string | undefined {
     } catch {}
   }
   return undefined;
+}
+
+function parseCookies(header?: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!header || typeof header !== 'string') return result;
+  const parts = header.split(';');
+  for (const part of parts) {
+    const idx = part.indexOf('=');
+    if (idx > 0) {
+      const key = part.slice(0, idx).trim();
+      const val = part.slice(idx + 1).trim();
+      result[key] = decodeURIComponent(val);
+    }
+  }
+  return result;
 }
 
 function promptChars(messages: ChatCompletionRequest['messages'] | undefined): number {
@@ -287,6 +303,19 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
     app.addHook('onRequest', async (request, reply) => {
       const url = request.raw.url || '';
       if (!url.startsWith('/v1/') && !url.startsWith('/v1beta/') && !url.startsWith('/api/gateway/')) return;
+
+      // Allow bootstrapping human sessions via login endpoint
+      if (url === '/api/gateway/session/login') return;
+
+      // Allow requests with verified local human sessions to access management endpoints
+      const cookieHeader = request.headers.cookie;
+      if (url.startsWith('/api/gateway/') && (cookieHeader || request.headers['x-session-token'])) {
+        const cookies = parseCookies(cookieHeader);
+        const sessionToken = cookies['emo_session_id'] || (typeof request.headers['x-session-token'] === 'string' ? request.headers['x-session-token'].trim() : undefined);
+        if (sessionToken && globalHumanSessionManager.getSession(sessionToken)) {
+          return;
+        }
+      }
 
       const provided = getApiKey(request);
       let authKeyInfo: KeyAuthResult | undefined;

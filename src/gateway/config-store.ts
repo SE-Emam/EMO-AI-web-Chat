@@ -388,13 +388,13 @@ export function migrateConfigKeys(config: GatewayConfigFile): { migrated: boolea
 
   let adminKey = cfg.gateway.adminApiKey || cfg.gateway.apiKey;
   if (!adminKey || isLegacyInsecureKey(adminKey)) {
-    adminKey = generateSecureApiKey('emo_adm_');
+    adminKey = generateSecureApiKey("emo_adm_");
     migrated = true;
   }
 
   let mcpKey = cfg.gateway.mcpApiKey;
   if (!mcpKey || isLegacyInsecureKey(mcpKey)) {
-    mcpKey = generateSecureApiKey('emo_mcp_');
+    mcpKey = generateSecureApiKey("emo_mcp_");
     migrated = true;
   }
 
@@ -404,21 +404,36 @@ export function migrateConfigKeys(config: GatewayConfigFile): { migrated: boolea
 
   const rawApiKeys = Array.isArray(cfg.gateway.apiKeys) ? cfg.gateway.apiKeys : [];
   const filteredApiKeys: ApiKeyItem[] = [];
+  const seenKeys = new Set<string>();
 
   for (const item of rawApiKeys) {
-    if (isLegacyInsecureKey(item.key)) {
+    if (!item || !item.key || isLegacyInsecureKey(item.key)) {
       migrated = true;
       continue;
+    }
+    const cleanKey = String(item.key).trim();
+    // Key Deduplication
+    if (seenKeys.has(cleanKey)) {
+      migrated = true;
+      continue;
+    }
+    seenKeys.add(cleanKey);
+
+    // Strict Scope check: Never escalate missing or unknown scope to admin
+    if (!item.scope || !["admin", "mcp", "group", "all"].includes(item.scope)) {
+      item.enabled = false;
+      item.scope = "group";
+      migrated = true;
     }
     filteredApiKeys.push(item);
   }
 
   if (!filteredApiKeys.some((k) => k.key === adminKey)) {
     filteredApiKeys.unshift({
-      id: 'key-admin',
-      name: 'Master Admin Key',
+      id: "key-admin",
+      name: "Master Admin Key",
       key: adminKey,
-      scope: 'admin',
+      scope: "admin",
       createdAt: now,
       enabled: true,
     });
@@ -427,10 +442,10 @@ export function migrateConfigKeys(config: GatewayConfigFile): { migrated: boolea
 
   if (!filteredApiKeys.some((k) => k.key === mcpKey)) {
     filteredApiKeys.push({
-      id: 'key-mcp-default',
-      name: 'Default MCP Client Key',
+      id: "key-mcp-default",
+      name: "Default MCP Client Key",
       key: mcpKey,
-      scope: 'mcp',
+      scope: "mcp",
       createdAt: now,
       enabled: true,
     });
@@ -438,6 +453,7 @@ export function migrateConfigKeys(config: GatewayConfigFile): { migrated: boolea
   }
 
   cfg.gateway.apiKeys = filteredApiKeys;
+  (cfg.gateway as any).migrationVersion = 2;
   return { migrated, config: cfg };
 }
 

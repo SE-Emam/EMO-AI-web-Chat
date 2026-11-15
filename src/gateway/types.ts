@@ -121,7 +121,7 @@ export interface ApiKeyItem {
   createdAt: string;
   lastUsedAt?: string;
   enabled: boolean;
-  scope?: "all" | "admin" | "mcp";
+  scope?: "all" | "admin" | "mcp" | "group";
   expiresAt?: string;
 }
 

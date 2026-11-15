@@ -31,6 +31,48 @@ export interface AuditLogEntry {
   details?: Record<string, unknown>;
 }
 
+/**
+ * Deep recursive canonicalization for deterministic cryptographic hashing.
+ * Sorts all object keys lexicographically at all depths, preserves array item order,
+ * filters out transient non-semantic fields (like `approval_id`), and handles primitives safely.
+ */
+export function deepCanonicalize(val: unknown): unknown {
+  if (val === null || val === undefined) return null;
+  if (typeof val === 'number' || typeof val === 'boolean') return val;
+  if (typeof val === 'string') return val;
+  if (Array.isArray(val)) {
+    return val.map((item) => deepCanonicalize(item));
+  }
+  if (typeof val === 'object') {
+    const obj = val as Record<string, unknown>;
+    const sortedKeys = Object.keys(obj)
+      .filter((k) => k !== 'approval_id')
+      .sort();
+    const result: Record<string, unknown> = {};
+    for (const key of sortedKeys) {
+      result[key] = deepCanonicalize(obj[key]);
+    }
+    return result;
+  }
+  return String(val);
+}
+
+/**
+ * Recursively redacts secrets from strings, nested arrays, and objects.
+ */
+export function deepRedactSecrets(val: unknown): unknown {
+  if (typeof val === 'string') return redactSecretsInText(val);
+  if (Array.isArray(val)) return val.map(deepRedactSecrets);
+  if (val !== null && typeof val === 'object') {
+    const res: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
+      res[k] = deepRedactSecrets(v);
+    }
+    return res;
+  }
+  return val;
+}
+
 export class ApprovalManager {
   private requests = new Map<string, ApprovalRequest>();
   private auditLogs: AuditLogEntry[] = [];
@@ -42,25 +84,21 @@ export class ApprovalManager {
   }
 
   static computeBindingHash(params: {
+    nonce: string;
     toolName: string;
     clientIdentity: string;
     target: string;
     cwd?: string;
     args: unknown;
   }): string {
-    const raw = params.args && typeof params.args === 'object' ? (params.args as Record<string, unknown>) : {};
-    const { approval_id: _ignored, ...filtered } = raw;
-    const sortedKeys = Object.keys(filtered).sort();
-    const sortedArgs: Record<string, unknown> = {};
-    for (const k of sortedKeys) {
-      sortedArgs[k] = filtered[k];
-    }
+    const canonicalArgs = deepCanonicalize(params.args);
     const payload = {
-      toolName: params.toolName,
-      clientIdentity: params.clientIdentity,
-      target: params.target,
-      cwd: params.cwd || '',
-      args: sortedArgs,
+      nonce: String(params.nonce || ''),
+      toolName: String(params.toolName || ''),
+      clientIdentity: String(params.clientIdentity || ''),
+      target: String(params.target || ''),
+      cwd: String(params.cwd || ''),
+      args: canonicalArgs,
     };
     return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
   }
@@ -81,6 +119,7 @@ export class ApprovalManager {
     const cwd = params.cwd || '';
 
     const argsHash = ApprovalManager.computeBindingHash({
+      nonce,
       toolName: params.toolName,
       clientIdentity: params.clientIdentity,
       target: params.target,
@@ -88,12 +127,7 @@ export class ApprovalManager {
       args: params.args,
     });
 
-    const safeDetails: Record<string, unknown> = {};
-    if (params.details) {
-      for (const [k, v] of Object.entries(params.details)) {
-        safeDetails[k] = typeof v === 'string' ? redactSecretsInText(v) : v;
-      }
-    }
+    const safeDetails = deepRedactSecrets(params.details || {}) as Record<string, unknown>;
 
     const req: ApprovalRequest = {
       id,
@@ -146,11 +180,12 @@ export class ApprovalManager {
   }
 
   approve(id: string, actor: string): ApprovalRequest {
-    // SECURITY: Strictly require admin identity. Never accept client/agent identities
+    // SECURITY: Strictly require authorized human or admin identity.
+    // Self-approval by agents or untrusted entities is strictly forbidden.
     const cleanActor = String(actor || '').trim();
-    if (!cleanActor.startsWith('admin:') && cleanActor !== 'local_admin_session') {
+    if (!cleanActor.startsWith('human:') && !cleanActor.startsWith('admin:')) {
       throw new Error(
-        `SECURITY_VIOLATION: Approvals cannot be performed by agent or untrusted entity "${cleanActor}". Admin authentication required, self-approval by agents is strictly forbidden.`
+        `SECURITY_VIOLATION: Approvals require an authorized operator identity ("${cleanActor}"). Agent self-approval or untrusted entities are strictly forbidden.`
       );
     }
 
@@ -181,9 +216,9 @@ export class ApprovalManager {
 
   reject(id: string, actor: string): ApprovalRequest {
     const cleanActor = String(actor || '').trim();
-    if (!cleanActor.startsWith('admin:') && cleanActor !== 'local_admin_session') {
+    if (!cleanActor.startsWith('human:') && !cleanActor.startsWith('admin:')) {
       throw new Error(
-        `SECURITY_VIOLATION: Rejections cannot be performed by agent or untrusted entity "${cleanActor}". Admin authentication required, rejection by agents is strictly forbidden.`
+        `SECURITY_VIOLATION: Rejections require an authorized operator identity ("${cleanActor}"). Agent or untrusted rejection is strictly forbidden.`
       );
     }
 
@@ -273,8 +308,9 @@ export class ApprovalManager {
         return false;
       }
 
-      // Check full cryptographic binding hash (args + cwd + target + toolName)
+      // Check full cryptographic binding hash (nonce + args + cwd + target + toolName)
       const currentHash = ApprovalManager.computeBindingHash({
+        nonce: req.nonce,
         toolName,
         clientIdentity,
         target,
