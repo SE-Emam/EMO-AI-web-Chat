@@ -2,7 +2,7 @@ import { chromium, type BrowserContext } from 'playwright';
 import { randomBytes, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import type { ArenaDriver, ChatMessage } from '../types.js';
-import type { ApiKeyItem, CustomAgent, CustomUpstreamProvider, GatewayConfigFile, ProviderAccount, ProviderAuthInfo, ProviderConfig, ProviderDiscoveryState, ProviderDiscoveryStatus, ProviderMetaState, ProviderRuntimeState, ProviderStatus, RouterGroup, RouterGroupTarget, WebProviderId } from './types.js';
+import type { ApiKeyItem, KeyAuthResult, CustomAgent, CustomUpstreamProvider, GatewayConfigFile, ProviderAccount, ProviderAuthInfo, ProviderConfig, ProviderDiscoveryState, ProviderDiscoveryStatus, ProviderMetaState, ProviderRuntimeState, ProviderStatus, RouterGroup, RouterGroupTarget, WebProviderId } from './types.js';
 import { WEB_PROVIDER_IDS } from './types.js';
 import { matchesProvider, providerSpec } from '../arena/providers.js';
 import type { GatewayConfigStore } from './config-store.js';
@@ -1952,6 +1952,53 @@ export class ProviderManager {
     item.enabled = enabled;
     await this.saveConfig();
     return item;
+  }
+
+  resolveKeyAuth(providedKey?: string): KeyAuthResult {
+    if (!providedKey || typeof providedKey !== 'string') {
+      return { valid: false, scope: 'group', error: 'KEY_INVALID' };
+    }
+    const clean = providedKey.trim();
+    if (!clean) {
+      return { valid: false, scope: 'group', error: 'KEY_INVALID' };
+    }
+
+    // 1. Master Admin Key
+    const masterAdmin = String(this.config.gateway.adminApiKey || this.config.gateway.apiKey || '').trim();
+    if (masterAdmin && clean === masterAdmin) {
+      return { valid: true, keyId: 'key-admin', scope: 'admin' };
+    }
+
+    // 2. Default MCP Client Key
+    const mcpKey = String(this.config.gateway.mcpApiKey || '').trim();
+    if (mcpKey && clean === mcpKey) {
+      return { valid: true, keyId: 'key-mcp-default', scope: 'mcp' };
+    }
+
+    // 3. Registered API Keys in config.gateway.apiKeys
+    if (Array.isArray(this.config.gateway.apiKeys)) {
+      const match = this.config.gateway.apiKeys.find((k) => String(k.key || '').trim() === clean);
+      if (match) {
+        const scope = match.scope || 'admin';
+        if (match.enabled === false) {
+          return { valid: false, keyId: match.id, scope, error: 'KEY_DISABLED' };
+        }
+        return { valid: true, keyId: match.id, scope };
+      }
+    }
+
+    // 4. Scoped Router Groups
+    if (Array.isArray(this.config.routerGroups)) {
+      const matchGroup = this.config.routerGroups.find((g) => String((g as any).apiKey || '').trim() === clean);
+      if (matchGroup) {
+        if (matchGroup.enabled === false) {
+          return { valid: false, keyId: `group-${matchGroup.id}`, scope: 'group', scopedGroup: matchGroup, error: 'KEY_DISABLED' };
+        }
+        return { valid: true, keyId: `group-${matchGroup.id}`, scope: 'group', scopedGroup: matchGroup };
+      }
+    }
+
+    return { valid: false, scope: 'group', error: 'KEY_INVALID' };
   }
 
   getValidApiKeys(): string[] {

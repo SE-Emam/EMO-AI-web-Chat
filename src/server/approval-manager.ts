@@ -1,4 +1,5 @@
 import { randomUUID, createHash, randomBytes } from 'node:crypto';
+import { redactSecretsInText } from './secret-redaction.js';
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired' | 'consumed';
 
@@ -7,6 +8,7 @@ export interface ApprovalRequest {
   toolName: string;
   clientIdentity: string;
   target: string;
+  cwd: string;
   argsHash: string;
   nonce: string;
   details: Record<string, unknown>;
@@ -33,27 +35,41 @@ export class ApprovalManager {
   private requests = new Map<string, ApprovalRequest>();
   private auditLogs: AuditLogEntry[] = [];
   private readonly defaultTtlMs: number;
+  private consumingLocks = new Set<string>();
 
   constructor(options?: { defaultTtlMs?: number }) {
     this.defaultTtlMs = options?.defaultTtlMs ?? 120_000; // 2 minutes TTL
   }
 
-  static hashArgs(args: unknown): string {
-    const raw = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
-    // Exclude approval_id itself from the hash if present so hash matches pre- and post-approval
+  static computeBindingHash(params: {
+    toolName: string;
+    clientIdentity: string;
+    target: string;
+    cwd?: string;
+    args: unknown;
+  }): string {
+    const raw = params.args && typeof params.args === 'object' ? (params.args as Record<string, unknown>) : {};
     const { approval_id: _ignored, ...filtered } = raw;
     const sortedKeys = Object.keys(filtered).sort();
-    const sortedObj: Record<string, unknown> = {};
+    const sortedArgs: Record<string, unknown> = {};
     for (const k of sortedKeys) {
-      sortedObj[k] = filtered[k];
+      sortedArgs[k] = filtered[k];
     }
-    return createHash('sha256').update(JSON.stringify(sortedObj)).digest('hex');
+    const payload = {
+      toolName: params.toolName,
+      clientIdentity: params.clientIdentity,
+      target: params.target,
+      cwd: params.cwd || '',
+      args: sortedArgs,
+    };
+    return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
   }
 
   createRequest(params: {
     toolName: string;
     clientIdentity: string;
     target: string;
+    cwd?: string;
     args: unknown;
     ttlMs?: number;
     details?: Record<string, unknown>;
@@ -62,16 +78,32 @@ export class ApprovalManager {
     const now = Date.now();
     const ttl = params.ttlMs ?? this.defaultTtlMs;
     const nonce = randomBytes(16).toString('hex');
-    const argsHash = ApprovalManager.hashArgs(params.args);
+    const cwd = params.cwd || '';
+
+    const argsHash = ApprovalManager.computeBindingHash({
+      toolName: params.toolName,
+      clientIdentity: params.clientIdentity,
+      target: params.target,
+      cwd,
+      args: params.args,
+    });
+
+    const safeDetails: Record<string, unknown> = {};
+    if (params.details) {
+      for (const [k, v] of Object.entries(params.details)) {
+        safeDetails[k] = typeof v === 'string' ? redactSecretsInText(v) : v;
+      }
+    }
 
     const req: ApprovalRequest = {
       id,
       toolName: params.toolName,
       clientIdentity: params.clientIdentity,
       target: params.target,
+      cwd,
       argsHash,
       nonce,
-      details: params.details || {},
+      details: safeDetails,
       createdAt: now,
       expiresAt: now + ttl,
       status: 'pending',
@@ -84,7 +116,7 @@ export class ApprovalManager {
       clientIdentity: params.clientIdentity,
       target: params.target,
       decision: 'requested',
-      details: { expiresAt: req.expiresAt },
+      details: { cwd, expiresAt: req.expiresAt },
     });
 
     return { ...req };
@@ -113,11 +145,15 @@ export class ApprovalManager {
     return results.sort((a, b) => b.createdAt - a.createdAt);
   }
 
-  approve(id: string, actor = 'local_user'): ApprovalRequest {
-    const actorLower = actor.toLowerCase();
-    if (actorLower.includes('agent') || actorLower.includes('subagent') || actorLower.includes('model')) {
-      throw new Error('SECURITY_VIOLATION: Agents are strictly forbidden from self-approving operations.');
+  approve(id: string, actor: string): ApprovalRequest {
+    // SECURITY: Strictly require admin identity. Never accept client/agent identities
+    const cleanActor = String(actor || '').trim();
+    if (!cleanActor.startsWith('admin:') && cleanActor !== 'local_admin_session') {
+      throw new Error(
+        `SECURITY_VIOLATION: Approvals cannot be performed by agent or untrusted entity "${cleanActor}". Admin authentication required, self-approval by agents is strictly forbidden.`
+      );
     }
+
     const req = this.requests.get(id);
     if (!req) throw new Error(`APPROVAL_NOT_FOUND: Request "${id}" not found.`);
     if (req.status === 'pending' && Date.now() > req.expiresAt) {
@@ -128,7 +164,7 @@ export class ApprovalManager {
     }
 
     req.status = 'approved';
-    req.decisionBy = actor;
+    req.decisionBy = cleanActor;
     req.decisionAt = Date.now();
 
     this.logAudit({
@@ -137,13 +173,20 @@ export class ApprovalManager {
       clientIdentity: req.clientIdentity,
       target: req.target,
       decision: 'approved',
-      details: { actor },
+      details: { actor: cleanActor },
     });
 
     return { ...req };
   }
 
-  reject(id: string, actor = 'local_user'): ApprovalRequest {
+  reject(id: string, actor: string): ApprovalRequest {
+    const cleanActor = String(actor || '').trim();
+    if (!cleanActor.startsWith('admin:') && cleanActor !== 'local_admin_session') {
+      throw new Error(
+        `SECURITY_VIOLATION: Rejections cannot be performed by agent or untrusted entity "${cleanActor}". Admin authentication required, rejection by agents is strictly forbidden.`
+      );
+    }
+
     const req = this.requests.get(id);
     if (!req) throw new Error(`APPROVAL_NOT_FOUND: Request "${id}" not found.`);
     if (req.status !== 'pending') {
@@ -151,7 +194,7 @@ export class ApprovalManager {
     }
 
     req.status = 'rejected';
-    req.decisionBy = actor;
+    req.decisionBy = cleanActor;
     req.decisionAt = Date.now();
 
     this.logAudit({
@@ -160,44 +203,110 @@ export class ApprovalManager {
       clientIdentity: req.clientIdentity,
       target: req.target,
       decision: 'rejected',
-      details: { actor },
+      details: { actor: cleanActor },
     });
 
     return { ...req };
   }
 
-  consume(id: string, args: unknown): boolean {
-    const req = this.requests.get(id);
-    if (!req) return false;
-    if (req.status !== 'approved') return false;
-    if (Date.now() > req.expiresAt) {
-      req.status = 'expired';
+  consume(params: {
+    id: string;
+    toolName: string;
+    clientIdentity: string;
+    target: string;
+    cwd?: string;
+    args: unknown;
+  }): boolean {
+    const { id, toolName, clientIdentity, target, cwd, args } = params;
+
+    // Mutex lock against concurrent consumption race conditions
+    if (this.consumingLocks.has(id)) {
       return false;
     }
+    this.consumingLocks.add(id);
 
-    const currentHash = ApprovalManager.hashArgs(args);
-    if (currentHash !== req.argsHash) {
+    try {
+      const req = this.requests.get(id);
+      if (!req) return false;
+      if (req.status !== 'approved') return false;
+      if (Date.now() > req.expiresAt) {
+        req.status = 'expired';
+        return false;
+      }
+
+      // Check tool binding
+      if (req.toolName !== toolName) {
+        this.logAudit({
+          approvalId: id,
+          toolName,
+          clientIdentity,
+          target,
+          decision: 'failed',
+          details: { reason: `TOOL_MISMATCH: requested for ${req.toolName}, attempted for ${toolName}` },
+        });
+        return false;
+      }
+
+      // Check target binding
+      if (req.target !== target) {
+        this.logAudit({
+          approvalId: id,
+          toolName,
+          clientIdentity,
+          target,
+          decision: 'failed',
+          details: { reason: `TARGET_MISMATCH: requested for ${req.target}, attempted for ${target}` },
+        });
+        return false;
+      }
+
+      // Check client identity binding
+      if (req.clientIdentity !== clientIdentity) {
+        this.logAudit({
+          approvalId: id,
+          toolName,
+          clientIdentity,
+          target,
+          decision: 'failed',
+          details: { reason: `CLIENT_MISMATCH: requested by ${req.clientIdentity}, attempted by ${clientIdentity}` },
+        });
+        return false;
+      }
+
+      // Check full cryptographic binding hash (args + cwd + target + toolName)
+      const currentHash = ApprovalManager.computeBindingHash({
+        toolName,
+        clientIdentity,
+        target,
+        cwd,
+        args,
+      });
+
+      if (currentHash !== req.argsHash) {
+        this.logAudit({
+          approvalId: id,
+          toolName,
+          clientIdentity,
+          target,
+          decision: 'failed',
+          details: { reason: 'ARGUMENTS_MISMATCH: arguments or parameters tampered after approval' },
+        });
+        return false;
+      }
+
+      // Atomic single-use state transition
+      req.status = 'consumed';
       this.logAudit({
         approvalId: id,
-        toolName: req.toolName,
-        clientIdentity: req.clientIdentity,
-        target: req.target,
-        decision: 'failed',
-        details: { reason: 'ARGUMENTS_MISMATCH' },
+        toolName,
+        clientIdentity,
+        target,
+        decision: 'executed',
       });
-      return false;
+      return true;
+    } finally {
+      this.consumingLocks.delete(id);
     }
-
-    // Mark single-use consumption
-    req.status = 'consumed';
-    this.logAudit({
-      approvalId: id,
-      toolName: req.toolName,
-      clientIdentity: req.clientIdentity,
-      target: req.target,
-      decision: 'executed',
-    });
-    return true;
   }
 
   logAudit(entry: Omit<AuditLogEntry, 'id' | 'timestamp'>): void {

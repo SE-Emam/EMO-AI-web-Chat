@@ -45,13 +45,15 @@ export class OpenAiTunnelPoller {
     private readonly apiKey: string,
     private readonly localMcpPort: number,
     private readonly baseUrl = 'https://api.openai.com',
-    private readonly gatewayApiKey?: string
+    private readonly gatewayApiKey?: string,
+    private readonly onStateChange?: (status: TunnelStatus, error?: string | null) => void
   ) {}
 
   start(): void {
     if (this.running) return;
     this.running = true;
     this.abortController = new AbortController();
+    this.onStateChange?.('starting', null);
     this.pollLoop().catch((err) => {
       console.error('[OpenAiTunnelPoller] Fatal loop error:', err);
     });
@@ -61,6 +63,7 @@ export class OpenAiTunnelPoller {
     this.running = false;
     this.abortController?.abort();
     this.abortController = null;
+    this.onStateChange?.('stopped', null);
   }
 
   private async pollLoop(): Promise<void> {
@@ -77,12 +80,12 @@ export class OpenAiTunnelPoller {
           headers: {
             Authorization: `Bearer ${this.apiKey}`,
             Accept: 'application/json',
-            'X-Tunnel-Client-Capabilities': 'wrong-cluster-v1',
-          },
+                      },
           signal: this.abortController?.signal,
         });
 
         if (res.status === 200) {
+          this.onStateChange?.('running', null);
           const command = (await res.json()) as any;
           if (command && command.id && command.payload) {
             // Forward JSON-RPC request to local gateway MCP endpoint
@@ -111,10 +114,12 @@ export class OpenAiTunnelPoller {
             }).catch(() => {});
           }
         } else if (res.status === 408 || res.status === 504) {
-          // Timeout from server long-poll; reconnect immediately
+          this.onStateChange?.('running', null);
           continue;
         } else if (res.status === 401 || res.status === 403) {
-          console.error(`[OpenAiTunnelPoller] Authentication failed (HTTP ${res.status}). Check your OpenAI API key and tunnel permissions.`);
+          const authErr = `Authentication failed (HTTP ${res.status}). Check your OpenAI API key and tunnel permissions.`;
+          this.onStateChange?.('error', authErr);
+          console.error(`[OpenAiTunnelPoller] ${authErr}`);
           await new Promise((r) => setTimeout(r, 10_000));
         } else {
           await new Promise((r) => setTimeout(r, 3_000));
@@ -173,13 +178,35 @@ export class McpTunnelServer {
         throw new Error('Please provide the tunnel endpoint URL or tunnelId from OpenAI Platform (https://platform.openai.com/settings/organization/tunnels).');
       }
 
-      // If tunnelId + apiKey are provided, activate the native background poller!
+      const publicMcpUrl = tunnelId ? base : (base.endsWith('/mcp') ? base : `${base.replace(/\/$/, '')}/mcp`);
+
       if (tunnelId && options.token) {
-        this.poller = new OpenAiTunnelPoller(tunnelId, options.token, port, undefined, options.gatewayApiKey);
+        this.state = {
+          status: 'starting',
+          provider,
+          localUrl: this.state.localUrl,
+          publicUrl: base,
+          publicMcpUrl,
+          startedAt: Date.now(),
+          tunnelId,
+          mode: 'native-poller',
+          error: null,
+        };
+        this.poller = new OpenAiTunnelPoller(
+          tunnelId,
+          options.token,
+          port,
+          undefined,
+          options.gatewayApiKey,
+          (status, error) => {
+            this.state.status = status;
+            if (error !== undefined) this.state.error = error;
+          }
+        );
         this.poller.start();
+        return this.getState();
       }
 
-      const publicMcpUrl = tunnelId ? base : (base.endsWith('/mcp') ? base : `${base.replace(/\/$/, '')}/mcp`);
       this.state = {
         status: 'running',
         provider,
@@ -188,7 +215,7 @@ export class McpTunnelServer {
         publicMcpUrl,
         startedAt: Date.now(),
         tunnelId,
-        mode: tunnelId && options.token ? 'native-poller' : 'proxy',
+        mode: 'proxy',
         error: null,
       };
       return this.getState();

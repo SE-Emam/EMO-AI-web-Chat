@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import type { WorkspaceToolContext } from './workspace-tools.js';
 import { resolveWorkspacePath } from './workspace-tools.js';
+import { redactSecretsInText } from './secret-redaction.js';
 import { globalApprovalManager, type ApprovalManager } from './approval-manager.js';
 
 export interface ExecCommandParams {
@@ -53,9 +54,77 @@ const DANGEROUS_PATTERNS = [
   /\brm\s+-rf\b/i,
 ];
 
-const MAX_BUFFER_BYTES = 500_000; // 500 KB
+const MAX_BUFFER_BYTES = 500_000; // 500 KB limit in bytes
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
+
+export function validateCommandSafety(command: string, args: string[]): { safe: boolean; reason?: string } {
+  const baseCmd = path.basename(command).toLowerCase();
+
+  // 1. Check Allowlist
+  if (!ALLOWED_EXECUTABLES.has(baseCmd)) {
+    return {
+      safe: false,
+      reason: `COMMAND_NOT_ALLOWED: "${baseCmd}" is not in the allowed executables list (${Array.from(ALLOWED_EXECUTABLES).join(', ')}).`,
+    };
+  }
+
+  // 2. Dangerous global patterns
+  const cmdLine = `${baseCmd} ${args.join(' ')}`;
+  for (const rx of DANGEROUS_PATTERNS) {
+    if (rx.test(cmdLine)) {
+      return { safe: false, reason: `SECURITY_VIOLATION: Command rejected due to dangerous pattern match (${rx}).` };
+    }
+  }
+
+  // 3. Subcommand and argument safety policies
+  if (baseCmd === 'node') {
+    for (const a of args) {
+      if (a === '-e' || a === '--eval' || a === '-p' || a === '--print') {
+        return {
+          safe: false,
+          reason: 'SECURITY_VIOLATION: Arbitrary string code execution (-e/--eval/-p) in node is prohibited.',
+        };
+      }
+    }
+  }
+
+  if (baseCmd === 'python' || baseCmd === 'python3') {
+    for (const a of args) {
+      if (a === '-c' || a === '-m' || a === '--command') {
+        return {
+          safe: false,
+          reason: `SECURITY_VIOLATION: Arbitrary code execution (${a}) in python is prohibited.`,
+        };
+      }
+    }
+  }
+
+  if (baseCmd === 'git') {
+    const dangerousGitFlags = ['--upload-pack', '--receive-pack', '--exec-path'];
+    for (const a of args) {
+      if (dangerousGitFlags.some((f) => a.startsWith(f))) {
+        return { safe: false, reason: `SECURITY_VIOLATION: Dangerous git flag "${a}" is prohibited.` };
+      }
+      if (a === 'config') {
+        return { safe: false, reason: 'SECURITY_VIOLATION: Modifying git configuration via terminal is prohibited.' };
+      }
+    }
+  }
+
+  if (baseCmd === 'npm') {
+    const dangerousNpmSubcommands = ['exec', 'init'];
+    if (args.length > 0 && dangerousNpmSubcommands.includes(args[0])) {
+      return { safe: false, reason: `SECURITY_VIOLATION: npm subcommand "${args[0]}" is prohibited.` };
+    }
+  }
+
+  if (baseCmd === 'npx') {
+    return { safe: false, reason: 'SECURITY_VIOLATION: npx arbitrary package execution is prohibited.' };
+  }
+
+  return { safe: true };
+}
 
 export function sanitizeEnv(baseEnv: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const safe: Record<string, string> = {};
@@ -66,14 +135,19 @@ export function sanitizeEnv(baseEnv: NodeJS.ProcessEnv = process.env): Record<st
     if (secretKeyPattern.test(k)) continue;
     safe[k] = v;
   }
-  // Standard safe paths
   safe.PATH = baseEnv.PATH || '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
   safe.LANG = 'en_US.UTF-8';
   return safe;
 }
 
 export class TerminalService {
-  constructor(private readonly approvalManager: ApprovalManager = globalApprovalManager) {}
+  private approvalManagerInstance?: ApprovalManager;
+  constructor(approvalManager?: ApprovalManager) {
+    this.approvalManagerInstance = approvalManager;
+  }
+  private get approvalManager(): ApprovalManager {
+    return this.approvalManagerInstance || globalApprovalManager;
+  }
 
   async executeCommand(
     params: ExecCommandParams,
@@ -85,31 +159,24 @@ export class TerminalService {
       throw new Error('COMMAND_REQUIRED: The "command" field is required.');
     }
 
-    // Security: reject shell paths and unapproved executables
     const baseCmd = path.basename(rawCmd);
     if (rawCmd.includes('/') || rawCmd.includes('\\')) {
       throw new Error(`SECURITY_ERROR: Specifying binary paths is not allowed ("${rawCmd}"). Use standard command name.`);
     }
 
-    if (!ALLOWED_EXECUTABLES.has(baseCmd)) {
-      throw new Error(
-        `COMMAND_NOT_ALLOWED: "${baseCmd}" is not in the allowed executables list (${Array.from(ALLOWED_EXECUTABLES).join(', ')}).`
-      );
-    }
-
     const args = Array.isArray(params.args) ? params.args.map((a) => String(a)) : [];
 
-    // Check for dangerous arguments
-    const cmdLine = `${baseCmd} ${args.join(' ')}`;
-    for (const rx of DANGEROUS_PATTERNS) {
-      if (rx.test(cmdLine)) {
-        throw new Error(`SECURITY_VIOLATION: Command rejected due to dangerous pattern match (${rx}).`);
-      }
+    // Granular Subcommand & Argument Safety Verification
+    const safety = validateCommandSafety(baseCmd, args);
+    if (!safety.safe) {
+      throw new Error(safety.reason || 'SECURITY_VIOLATION: Command rejected by security policy.');
     }
 
     // Validate working directory with Default Deny
     const targetDir = params.working_directory || ctx.defaultRoot || '.';
     const validatedCwd = resolveWorkspacePath(targetDir, ctx);
+
+    const targetDescription = `${baseCmd} ${args.join(' ')}`.trim();
 
     // Enforce Approval
     const approvalId = params.approval_id ? String(params.approval_id).trim() : '';
@@ -117,29 +184,33 @@ export class TerminalService {
       const approvalReq = this.approvalManager.createRequest({
         toolName: 'exec_command',
         clientIdentity,
-        target: `${baseCmd} ${args.join(' ')} (cwd: ${validatedCwd})`,
+        target: targetDescription,
+        cwd: validatedCwd,
         args: { command: baseCmd, args, working_directory: validatedCwd },
         details: { command: baseCmd, args, cwd: validatedCwd },
       });
 
       throw new Error(
-        `APPROVAL_REQUIRED: Terminal execution of "${baseCmd} ${args.join(' ')}" requires explicit user approval. ` +
+        `APPROVAL_REQUIRED: Terminal execution of "${targetDescription}" requires explicit user approval. ` +
         `Approval ID: ${approvalReq.id}. Present this to the local user to approve.`
       );
     }
 
-    // Verify and consume approval token (single-use)
-    const consumed = this.approvalManager.consume(approvalId, {
-      command: baseCmd,
-      args,
-      working_directory: validatedCwd,
+    // Verify and consume approval token (cryptographically bound, single-use)
+    const consumed = this.approvalManager.consume({
+      id: approvalId,
+      toolName: 'exec_command',
+      clientIdentity,
+      target: targetDescription,
+      cwd: validatedCwd,
+      args: { command: baseCmd, args, working_directory: validatedCwd },
     });
 
     if (!consumed) {
       const req = this.approvalManager.getRequest(approvalId);
       const state = req ? req.status : 'not_found';
       throw new Error(
-        `APPROVAL_DENIED: Approval ID "${approvalId}" is invalid, expired, or already consumed (Status: ${state}).`
+        `APPROVAL_DENIED: Approval ID "${approvalId}" is invalid, expired, tampered, or already consumed (Status: ${state}).`
       );
     }
 
@@ -168,20 +239,22 @@ export class TerminalService {
       }, timeoutMs);
 
       child.stdout.on('data', (chunk: Buffer) => {
-        if (stdoutBuffer.length < MAX_BUFFER_BYTES) {
+        const currentBytes = Buffer.byteLength(stdoutBuffer, 'utf8');
+        if (currentBytes < MAX_BUFFER_BYTES) {
           stdoutBuffer += chunk.toString('utf8');
-          if (stdoutBuffer.length >= MAX_BUFFER_BYTES) {
-            stdoutBuffer = stdoutBuffer.slice(0, MAX_BUFFER_BYTES) + '\n[truncated: max buffer exceeded]';
+          if (Buffer.byteLength(stdoutBuffer, 'utf8') >= MAX_BUFFER_BYTES) {
+            stdoutBuffer += '\n[truncated: max buffer exceeded]';
             truncated = true;
           }
         }
       });
 
       child.stderr.on('data', (chunk: Buffer) => {
-        if (stderrBuffer.length < MAX_BUFFER_BYTES) {
+        const currentBytes = Buffer.byteLength(stderrBuffer, 'utf8');
+        if (currentBytes < MAX_BUFFER_BYTES) {
           stderrBuffer += chunk.toString('utf8');
-          if (stderrBuffer.length >= MAX_BUFFER_BYTES) {
-            stderrBuffer = stderrBuffer.slice(0, MAX_BUFFER_BYTES) + '\n[truncated: max buffer exceeded]';
+          if (Buffer.byteLength(stderrBuffer, 'utf8') >= MAX_BUFFER_BYTES) {
+            stderrBuffer += '\n[truncated: max buffer exceeded]';
             truncated = true;
           }
         }
@@ -193,7 +266,7 @@ export class TerminalService {
           approvalId,
           toolName: 'exec_command',
           clientIdentity,
-          target: `${baseCmd} ${args.join(' ')}`,
+          target: targetDescription,
           decision: 'failed',
           details: { error: err.message },
         });
@@ -207,9 +280,13 @@ export class TerminalService {
           return reject(new Error(`COMMAND_TIMEOUT: Command timed out after ${timeoutMs}ms.`));
         }
 
+        // Apply comprehensive secret redaction on terminal outputs
+        const cleanStdout = redactSecretsInText(stdoutBuffer);
+        const cleanStderr = redactSecretsInText(stderrBuffer);
+
         resolve({
-          stdout: stdoutBuffer,
-          stderr: stderrBuffer,
+          stdout: cleanStdout,
+          stderr: cleanStderr,
           exitCode: code,
           durationMs,
           approvalId,

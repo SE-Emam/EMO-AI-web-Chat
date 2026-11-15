@@ -19,6 +19,8 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { globalTerminalService } from './terminal-service.js';
 import type { ApprovalManager } from './approval-manager.js';
+export { redactSecretsInText } from './secret-redaction.js';
+import { redactSecretsInText } from './secret-redaction.js';
 
 export interface ToolDefinition {
   name: string;
@@ -62,17 +64,7 @@ export function isSensitiveFile(targetPath: string): boolean {
   return SENSITIVE_FILE_REGEX.test(base) || SENSITIVE_DIR_REGEX.test(norm);
 }
 
-export function redactSecretsInText(text: string): string {
-  return text
-    .split('\n')
-    .map((line) => {
-      if (/(KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTH|CREDENTIAL|PRIVATE)/i.test(line)) {
-        return line.replace(/(:\s*["']?|=\s*["']?)([^"'\s\r\n;]{6,})([;"']?)/gi, '$1[REDACTED]$3');
-      }
-      return line;
-    })
-    .join('\n');
-}
+// redactSecretsInText re-exported from ./secret-redaction.js
 
 /** The tools every bound agent can use. */
 export const WORKSPACE_TOOLS: ToolDefinition[] = [
@@ -416,7 +408,13 @@ export async function callWorkspaceTool(
             `APPROVAL_REQUIRED: Operation write_file on "${file}" requires approval. Approval ID: ${req.id}`
           );
         }
-        const ok = ctx.approvalManager.consume(approvalId, args);
+        const ok = ctx.approvalManager.consume({
+          id: approvalId,
+          toolName: 'write_file',
+          clientIdentity: ctx.clientIdentity || 'Agent',
+          target: file,
+          args,
+        });
         if (!ok) {
           throw new Error(`APPROVAL_DENIED: Approval ID "${approvalId}" is invalid, expired, or already consumed.`);
         }
@@ -459,7 +457,13 @@ export async function callWorkspaceTool(
             `APPROVAL_REQUIRED: Operation edit_file on "${file}" requires approval. Approval ID: ${req.id}`
           );
         }
-        const ok = ctx.approvalManager.consume(approvalId, args);
+        const ok = ctx.approvalManager.consume({
+          id: approvalId,
+          toolName: 'edit_file',
+          clientIdentity: ctx.clientIdentity || 'Agent',
+          target: file,
+          args,
+        });
         if (!ok) {
           throw new Error(`APPROVAL_DENIED: Approval ID "${approvalId}" is invalid, expired, or already consumed.`);
         }
@@ -565,7 +569,13 @@ export async function callWorkspaceTool(
             `APPROVAL_REQUIRED: Operation move_file requires approval. Approval ID: ${req.id}`
           );
         }
-        const ok = ctx.approvalManager.consume(approvalId, args);
+        const ok = ctx.approvalManager.consume({
+          id: approvalId,
+          toolName: 'move_file',
+          clientIdentity: ctx.clientIdentity || 'Agent',
+          target: `${from} → ${to}`,
+          args,
+        });
         if (!ok) {
           throw new Error(`APPROVAL_DENIED: Approval ID "${approvalId}" is invalid, expired, or already consumed.`);
         }
@@ -597,7 +607,13 @@ export async function callWorkspaceTool(
             `APPROVAL_REQUIRED: Operation delete_file on "${file}" requires approval. Approval ID: ${req.id}`
           );
         }
-        const ok = ctx.approvalManager.consume(approvalId, args);
+        const ok = ctx.approvalManager.consume({
+          id: approvalId,
+          toolName: 'delete_file',
+          clientIdentity: ctx.clientIdentity || 'Agent',
+          target: file,
+          args,
+        });
         if (!ok) {
           throw new Error(`APPROVAL_DENIED: Approval ID "${approvalId}" is invalid, expired, or already consumed.`);
         }
@@ -623,6 +639,7 @@ export async function callWorkspaceTool(
       }
       const filePattern = args.file_pattern ? String(args.file_pattern) : null;
       const results: string[] = [];
+      const realRoots = ctx.roots.map((r) => realPathForCheck(r));
 
       const walk = async (current: string): Promise<void> => {
         if (results.length >= MAX_SEARCH_RESULTS) return;
@@ -636,14 +653,36 @@ export async function callWorkspaceTool(
           if (results.length >= MAX_SEARCH_RESULTS) return;
           if (e.name.startsWith('.') || e.name === 'node_modules') continue;
           const full = path.join(current, e.name);
-          if (e.isDirectory()) {
+
+          // Deep Symlink Traversal Protection
+          let realEntry: string;
+          try {
+            realEntry = fs.realpathSync(full);
+          } catch {
+            continue;
+          }
+          const inside = realRoots.some((root) => isInside(realEntry, root));
+          if (!inside) {
+            // Target is outside authorized workspace roots (symlink traversal blocked)
+            continue;
+          }
+
+          let isDir = false;
+          try {
+            const st = fs.statSync(full);
+            isDir = st.isDirectory();
+          } catch {
+            continue;
+          }
+
+          if (isDir) {
             await walk(full);
             continue;
           }
-          if (filePattern && !e.name.includes(filePattern.replace(/^\*|\$$/g, ''))) continue;
+          if (filePattern && !e.name.includes(filePattern.replace(/^\*|\$/g, ''))) continue;
 
           // Skip searching inside sensitive files
-          if (isSensitiveFile(full)) continue;
+          if (isSensitiveFile(full) || isSensitiveFile(realEntry)) continue;
 
           let content: string;
           try {

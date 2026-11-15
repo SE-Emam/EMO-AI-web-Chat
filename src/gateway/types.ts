@@ -106,6 +106,14 @@ export interface ProviderMetaState {
   lastConnectionLatencyMs?: number;
 }
 
+
+export interface KeyAuthResult {
+  valid: boolean;
+  keyId?: string;
+  scope: 'admin' | 'mcp' | 'group' | 'all';
+  scopedGroup?: RouterGroup;
+  error?: 'KEY_INVALID' | 'KEY_DISABLED' | 'KEY_EXPIRED' | 'INSUFFICIENT_SCOPE';
+}
 export interface ApiKeyItem {
   id: string;
   name: string;

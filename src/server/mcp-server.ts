@@ -21,6 +21,7 @@ import {
   type WorkspaceToolContext,
 } from './workspace-tools.js';
 import { globalApprovalManager, type ApprovalManager } from './approval-manager.js';
+import type { KeyAuthResult } from '../gateway/types.js';
 
 const PROTOCOL_VERSION = '2025-06-18';
 const SERVER_INFO = { name: 'emo-ai-workspace', version: '1.1.0' };
@@ -48,6 +49,7 @@ const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
 
 export interface McpServerOptions {
   isValidApiKey?: (key: string) => boolean;
+  resolveKeyAuth?: (key: string) => KeyAuthResult;
   apiKey?: string;
   workspaceRoots?: string[] | (() => string[]);
   approvalManager?: ApprovalManager;
@@ -208,9 +210,45 @@ export function registerMcpServer(app: FastifyInstance, opts: McpServerOptions =
   };
 
   const guard = (req: FastifyRequest, reply: FastifyReply): boolean => {
-    if (isAuthorized(req, opts)) return true;
-    reply.status(401).send({ error: { message: 'Invalid or missing API key', type: 'authentication_error' } });
-    return false;
+    const provided = extractKey(req);
+    if (!provided) {
+      if (!opts.isValidApiKey && !opts.apiKey && !opts.resolveKeyAuth) return true;
+      reply.status(401).send({ error: { message: 'Invalid or missing API key', type: 'authentication_error' } });
+      return false;
+    }
+
+    if (opts.resolveKeyAuth) {
+      const auth = opts.resolveKeyAuth(provided);
+      if (!auth.valid) {
+        reply.status(401).send({ error: { message: 'Invalid or missing API key', type: 'authentication_error' } });
+        return false;
+      }
+      if (auth.scope === 'group') {
+        reply.status(403).send({
+          error: {
+            message: 'Access denied: Scoped router group keys cannot access MCP tools.',
+            code: 'INSUFFICIENT_SCOPE',
+          },
+        });
+        return false;
+      }
+      (req as any).authKeyInfo = auth;
+      return true;
+    }
+
+    if (opts.isValidApiKey) {
+      if (opts.isValidApiKey(provided)) return true;
+      reply.status(401).send({ error: { message: 'Invalid or missing API key', type: 'authentication_error' } });
+      return false;
+    }
+
+    if (opts.apiKey) {
+      if (provided === opts.apiKey) return true;
+      reply.status(401).send({ error: { message: 'Invalid or missing API key', type: 'authentication_error' } });
+      return false;
+    }
+
+    return true;
   };
 
   // --- Streamable HTTP: JSON-RPC endpoint --------------------------

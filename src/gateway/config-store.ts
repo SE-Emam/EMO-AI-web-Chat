@@ -374,6 +374,73 @@ function mergeConfig(defaults: GatewayConfigFile, raw: unknown): GatewayConfigFi
   };
 }
 
+
+export function isLegacyInsecureKey(key?: string): boolean {
+  if (!key || typeof key !== 'string') return false;
+  const clean = key.trim();
+  return clean === 'emo.web' || clean === 'sk-local' || clean === 'default' || clean === 'emo.ai';
+}
+
+export function migrateConfigKeys(config: GatewayConfigFile): { migrated: boolean; config: GatewayConfigFile } {
+  let migrated = false;
+  const cfg = JSON.parse(JSON.stringify(config)) as GatewayConfigFile;
+  const now = new Date().toISOString();
+
+  let adminKey = cfg.gateway.adminApiKey || cfg.gateway.apiKey;
+  if (!adminKey || isLegacyInsecureKey(adminKey)) {
+    adminKey = generateSecureApiKey('emo_adm_');
+    migrated = true;
+  }
+
+  let mcpKey = cfg.gateway.mcpApiKey;
+  if (!mcpKey || isLegacyInsecureKey(mcpKey)) {
+    mcpKey = generateSecureApiKey('emo_mcp_');
+    migrated = true;
+  }
+
+  cfg.gateway.apiKey = adminKey;
+  cfg.gateway.adminApiKey = adminKey;
+  cfg.gateway.mcpApiKey = mcpKey;
+
+  const rawApiKeys = Array.isArray(cfg.gateway.apiKeys) ? cfg.gateway.apiKeys : [];
+  const filteredApiKeys: ApiKeyItem[] = [];
+
+  for (const item of rawApiKeys) {
+    if (isLegacyInsecureKey(item.key)) {
+      migrated = true;
+      continue;
+    }
+    filteredApiKeys.push(item);
+  }
+
+  if (!filteredApiKeys.some((k) => k.key === adminKey)) {
+    filteredApiKeys.unshift({
+      id: 'key-admin',
+      name: 'Master Admin Key',
+      key: adminKey,
+      scope: 'admin',
+      createdAt: now,
+      enabled: true,
+    });
+    migrated = true;
+  }
+
+  if (!filteredApiKeys.some((k) => k.key === mcpKey)) {
+    filteredApiKeys.push({
+      id: 'key-mcp-default',
+      name: 'Default MCP Client Key',
+      key: mcpKey,
+      scope: 'mcp',
+      createdAt: now,
+      enabled: true,
+    });
+    migrated = true;
+  }
+
+  cfg.gateway.apiKeys = filteredApiKeys;
+  return { migrated, config: cfg };
+}
+
 export class GatewayConfigStore {
   readonly path: string;
   constructor(filePath?: string) {
@@ -397,7 +464,17 @@ export class GatewayConfigStore {
         );
       }
       const defaults = defaultGatewayConfig();
-      return mergeConfig(defaults, parsed);
+      const merged = mergeConfig(defaults, parsed);
+      const { migrated, config: migratedConfig } = migrateConfigKeys(merged);
+      if (migrated) {
+        const migrationBackup = `${this.path}.migration-backup.${Date.now()}`;
+        try {
+          await fs.writeFile(migrationBackup, text, { encoding: 'utf8', mode: 0o600 });
+        } catch {}
+        await this.save(migratedConfig);
+        return migratedConfig;
+      }
+      return merged;
     } catch (err: any) {
       if (err.code === 'ENOENT') {
         const defaults = defaultGatewayConfig();

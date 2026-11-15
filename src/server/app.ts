@@ -12,7 +12,7 @@ import {
   formatModelList,
   formatToolCallChunks,
 } from './openai-formatter.js';
-import type { GatewayConfigFile } from '../gateway/types.js';
+import type { GatewayConfigFile, KeyAuthResult } from '../gateway/types.js';
 import type { ProviderManager } from '../gateway/provider-manager.js';
 import type { UsageTracker } from '../gateway/usage-tracker.js';
 import { registerGatewayRoutes } from './gateway-routes.js';
@@ -165,7 +165,7 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
   const loadedConfig = gatewayMode ? undefined : loadConfig(config);
   void loadedConfig;
   const requireApiKey = gatewayMode ? !!gateway!.gatewayConfig.gateway.requireApiKey : false;
-  const apiKey = gatewayMode ? String(gateway!.gatewayConfig.gateway.apiKey || 'emo.web') : '';
+  const apiKey = gatewayMode ? String(gateway!.gatewayConfig.gateway.apiKey || '') : '';
   // Claim-once request broker (opt-in via X-Request-Id; never breaks existing
   // clients). Durable across gateway restarts; every claim is cross-process.
   const requestBroker = new RequestBroker();
@@ -286,18 +286,30 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
   if (requireApiKey) {
     app.addHook('onRequest', async (request, reply) => {
       const url = request.raw.url || '';
-      // Protect /v1/*, /v1beta/* and management API /api/gateway/* — UI and / are only for local display.
-      // Allow /health and / without auth (health probes and the management UI shell).
       if (!url.startsWith('/v1/') && !url.startsWith('/v1beta/') && !url.startsWith('/api/gateway/')) return;
+
       const provided = getApiKey(request);
-      const scopedGroup = (gateway && typeof (gateway.manager as any).getGroupForApiKey === 'function' && provided)
-        ? (gateway.manager as any).getGroupForApiKey(provided)
-        : undefined;
-      if (scopedGroup) (request as any).scopedRouterGroup = scopedGroup;
+      let authKeyInfo: KeyAuthResult | undefined;
+      if (gateway && typeof (gateway.manager as any).resolveKeyAuth === 'function' && provided) {
+        authKeyInfo = (gateway.manager as any).resolveKeyAuth(provided);
+      }
+      if (authKeyInfo) {
+        (request as any).authKeyInfo = authKeyInfo;
+        if (authKeyInfo.scopedGroup) {
+          (request as any).scopedRouterGroup = authKeyInfo.scopedGroup;
+        }
+      } else if (gateway && typeof (gateway.manager as any).getGroupForApiKey === 'function' && provided) {
+        const scopedGroup = (gateway.manager as any).getGroupForApiKey(provided);
+        if (scopedGroup) (request as any).scopedRouterGroup = scopedGroup;
+      }
+
       const validKeys = (gateway && typeof gateway.manager.getValidApiKeys === 'function')
         ? gateway.manager.getValidApiKeys()
         : (apiKey ? [apiKey] : []);
-      if (!provided || !isValidApiKey(provided, validKeys)) {
+
+      const isValid = authKeyInfo ? authKeyInfo.valid : (provided && isValidApiKey(provided, validKeys));
+
+      if (!provided || !isValid) {
         if (url.startsWith('/v1/messages')) {
           return reply.status(401).send({
             type: 'error',
@@ -315,15 +327,73 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
         }
         return reply.status(401).send({ error: { message: 'Invalid or missing API key', type: 'authentication_error' } });
       }
+
+      // Key Scope Enforcement
+      if (authKeyInfo) {
+        if (url.startsWith('/api/gateway/')) {
+          if (authKeyInfo.scope !== 'admin' && authKeyInfo.scope !== 'all') {
+            return reply.status(403).send({
+              error: {
+                message: 'Access denied: Admin scope required for gateway management.',
+                code: 'INSUFFICIENT_SCOPE',
+              },
+            });
+          }
+        }
+
+        if (url.startsWith('/v1/') || url.startsWith('/v1beta/')) {
+          if (authKeyInfo.scope === 'mcp') {
+            return reply.status(403).send({
+              error: {
+                message: 'Access denied: MCP client key cannot access model completion endpoints.',
+                code: 'INSUFFICIENT_SCOPE',
+              },
+            });
+          }
+        }
+      }
     });
   } else {
-    // Even when API key auth is not required, honor per-group scoped keys for routing.
-    app.addHook('onRequest', async (request, _reply) => {
+    app.addHook('onRequest', async (request, reply) => {
+      const url = request.raw.url || '';
       const provided = getApiKey(request);
-      const scopedGroup = (gateway && typeof (gateway.manager as any).getGroupForApiKey === 'function' && provided)
-        ? (gateway.manager as any).getGroupForApiKey(provided)
-        : undefined;
-      if (scopedGroup) (request as any).scopedRouterGroup = scopedGroup;
+      if (!provided) return;
+
+      let authKeyInfo: KeyAuthResult | undefined;
+      if (gateway && typeof (gateway.manager as any).resolveKeyAuth === 'function') {
+        authKeyInfo = (gateway.manager as any).resolveKeyAuth(provided);
+      }
+      if (authKeyInfo) {
+        (request as any).authKeyInfo = authKeyInfo;
+        if (authKeyInfo.scopedGroup) {
+          (request as any).scopedRouterGroup = authKeyInfo.scopedGroup;
+        }
+
+        if (url.startsWith('/api/gateway/')) {
+          if (authKeyInfo.scope !== 'admin' && authKeyInfo.scope !== 'all') {
+            return reply.status(403).send({
+              error: {
+                message: 'Access denied: Admin scope required for gateway management.',
+                code: 'INSUFFICIENT_SCOPE',
+              },
+            });
+          }
+        }
+
+        if (url.startsWith('/v1/') || url.startsWith('/v1beta/')) {
+          if (authKeyInfo.scope === 'mcp') {
+            return reply.status(403).send({
+              error: {
+                message: 'Access denied: MCP client key cannot access model completion endpoints.',
+                code: 'INSUFFICIENT_SCOPE',
+              },
+            });
+          }
+        }
+      } else if (gateway && typeof (gateway.manager as any).getGroupForApiKey === 'function') {
+        const scopedGroup = (gateway.manager as any).getGroupForApiKey(provided);
+        if (scopedGroup) (request as any).scopedRouterGroup = scopedGroup;
+      }
     });
   }
 

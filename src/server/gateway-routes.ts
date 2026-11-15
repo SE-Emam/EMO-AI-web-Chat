@@ -584,7 +584,7 @@ export async function autoConfigureAgent(
   agentId: string,
   manager: ProviderManager,
   port = 8989,
-  apiKey = 'emo.web',
+  apiKey = '',
   home: string = os.homedir()
 ): Promise<{
   success: boolean;
@@ -1359,6 +1359,7 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
   // that URL real — without it every agent tool call failed with a broken
   // workspace connection.
   registerMcpServer(app, {
+    resolveKeyAuth: (key) => opts.manager.resolveKeyAuth(key),
     isValidApiKey: (key) => isValidApiKey(key, opts.manager.getValidApiKeys()),
     apiKey: opts.getGatewayConfig().gateway.apiKey,
     // Read LIVE so a change of the workspace root applies immediately.
@@ -1626,7 +1627,7 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
     const { id } = req.params as { id: string };
     const cfg = opts.getGatewayConfig();
     const port = cfg.gateway.port || 8989;
-    const apiKey = cfg.gateway.apiKey || 'emo.web';
+    const apiKey = cfg.gateway.apiKey || '';
     try {
       // Honest guard: never bind an agent that is not actually installed.
       const agents = await detectLocalAgents(opts.manager, true);
@@ -1746,7 +1747,7 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
     const body = (req.body || {}) as { agentIds?: unknown };
     const cfg = opts.getGatewayConfig();
     const port = cfg.gateway.port || 8989;
-    const apiKey = cfg.gateway.apiKey || 'emo.web';
+    const apiKey = cfg.gateway.apiKey || '';
     const only = Array.isArray(body.agentIds)
       ? body.agentIds.filter((a): a is string => typeof a === 'string' && a.trim().length > 0)
       : undefined;
@@ -2183,8 +2184,8 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
   app.post('/api/gateway/approvals/:id/approve', async (req, reply) => {
     const { id } = req.params as { id: string };
     try {
-      const body = (req.body || {}) as { actor?: string };
-      const actor = body.actor || 'local_user';
+      const keyId = (req as any).authKeyInfo?.keyId || 'local_admin';
+      const actor = `admin:${keyId}`;
       const result = globalApprovalManager.approve(id, actor);
       return { ok: true, approval: result };
     } catch (e) {
@@ -2195,8 +2196,8 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
   app.post('/api/gateway/approvals/:id/reject', async (req, reply) => {
     const { id } = req.params as { id: string };
     try {
-      const body = (req.body || {}) as { actor?: string };
-      const actor = body.actor || 'local_user';
+      const keyId = (req as any).authKeyInfo?.keyId || 'local_admin';
+      const actor = `admin:${keyId}`;
       const result = globalApprovalManager.reject(id, actor);
       return { ok: true, approval: result };
     } catch (e) {
