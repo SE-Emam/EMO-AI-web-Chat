@@ -177,6 +177,49 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
   // src/server/graceful-shutdown.ts.
   const app = Fastify({ logger: false, bodyLimit: 2_500_000, forceCloseConnections: 'idle' });
 
+  // --- Public Tunnel Exposure Isolation Hook ---
+  // When accessed via public tunnel (Cloudflare, Ngrok, or reverse proxy),
+  // strictly allow ONLY /mcp, /mcp/*, and /health.
+  // Block management UI, /api/gateway/*, and /v1/* with 403 Forbidden.
+  app.addHook('onRequest', async (request, reply) => {
+    const rawUrl = request.raw.url || '';
+    const pathname = rawUrl.split('?')[0];
+
+    const host = String(request.headers.host || '').toLowerCase();
+    const fwdHost = String(request.headers['x-forwarded-host'] || '').toLowerCase();
+    const isTunnelHost =
+      host.includes('trycloudflare.com') ||
+      host.includes('ngrok-free.app') ||
+      host.includes('ngrok.io') ||
+      host.includes('ngrok.app') ||
+      host.includes('loca.lt') ||
+      fwdHost.includes('trycloudflare.com') ||
+      fwdHost.includes('ngrok');
+
+    const hasTunnelHeaders = Boolean(
+      request.headers['cf-connecting-ip'] ||
+      request.headers['cf-ray'] ||
+      request.headers['ngrok-trace-id'] ||
+      request.headers['x-tunnel-client']
+    );
+
+    if (isTunnelHost || hasTunnelHeaders) {
+      const isAllowedMcpOrHealth =
+        pathname === '/mcp' ||
+        pathname.startsWith('/mcp/') ||
+        pathname === '/health';
+
+      if (!isAllowedMcpOrHealth) {
+        return reply.status(403).send({
+          error: {
+            message: 'TUNNEL_ACCESS_DENIED: Access to management API, chat completions, and UI is forbidden over public tunnel.',
+            type: 'tunnel_access_denied',
+          },
+        });
+      }
+    }
+  });
+
   const isGatewayServiceActive = (): boolean => {
     if (gateway && typeof (gateway.manager as any).isServiceRunning === 'function') {
       return (gateway.manager as any).isServiceRunning();

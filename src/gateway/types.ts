@@ -113,6 +113,8 @@ export interface ApiKeyItem {
   createdAt: string;
   lastUsedAt?: string;
   enabled: boolean;
+  scope?: "all" | "admin" | "mcp";
+  expiresAt?: string;
 }
 
 export interface CustomUpstreamProvider {
@@ -155,6 +157,8 @@ export interface GatewaySettings {
   host: string;
   baseUriDisplay: string;
   apiKey: string;
+  adminApiKey?: string;
+  mcpApiKey?: string;
   requireApiKey: boolean;
   serviceEnabled?: boolean;
   apiKeys?: ApiKeyItem[];

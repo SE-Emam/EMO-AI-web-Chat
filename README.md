@@ -199,7 +199,31 @@ curl -X POST http://127.0.0.1:8989/v1/chat/completions \
 
 Expose your local Model Context Protocol (MCP) server (`http://127.0.0.1:8989/mcp`) so ChatGPT can read, edit, and run local workspace files safely.
 
-### Supported Tunnel Providers
+### Security Architecture & Approval Flow
+
+EMO-AI-web enforces defense-in-depth across the local gateway, MCP workspace tools, and public tunnels:
+
+1. **Default Deny Workspace Roots**:
+   - The MCP server will strictly refuse access to any directory not explicitly configured in Gateway Settings.
+   - Symbolic links pointing outside authorized workspace roots are blocked with `OUTSIDE_WORKSPACE`.
+   - Traversal attempts (`../`, null bytes `\0`) are rejected.
+2. **Credential & Sensitive File Shielding**:
+   - Sensitive credential files (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `.ssh/*`, `.aws/*`, `credentials*`) are blocked by default.
+   - Secret tokens, passwords, and API keys are automatically redacted in `read_file` and `search_files` results.
+3. **Centralized Approval Manager**:
+   - Mutating operations (`write_file`, `edit_file`, `delete_file`, `move_file`) and terminal executions require cryptographic single-use approval tokens.
+   - Agents are strictly prohibited from self-approving requests. Approvals must originate from the local user via the management dashboard or approval API (`/api/gateway/approvals/:id/approve`).
+4. **Secure Terminal Service (`exec_command`)**:
+   - Allows safe execution of approved CLI tools (`git`, `npm`, `node`, `tsc`, `python3`, `cargo`, `go`, etc.).
+   - Commands are passed as structured arguments with `shell: false` (no shell injection risk).
+   - Sensitive environment variables are stripped prior to spawning child processes.
+5. **Public Tunnel Exposure Isolation**:
+   - Traffic arriving via public reverse tunnels (Cloudflare Quick Tunnel, Ngrok, etc.) is restricted **exclusively** to `/mcp`, `/mcp/*`, and `/health`.
+   - Access to management APIs (`/api/gateway/*`), completion routes (`/v1/*`), and the management UI over public tunnels is immediately rejected with `403 Forbidden` (`TUNNEL_ACCESS_DENIED`).
+
+---
+
+## Supported Tunnel Providers
 
 1. **OpenAI Organization Tunnels**:
    - Native integration with [OpenAI Platform Tunnels](https://platform.openai.com/settings/organization/tunnels).

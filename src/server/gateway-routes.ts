@@ -10,6 +10,7 @@ import { isValidApiKey } from '../gateway/security.js';
 import { registerMcpServer } from './mcp-server.js';
 import { mcpTunnelServer } from './mcp-tunnel-server.js';
 import { configureMcpServers, mcpTargets } from '../gateway/mcp-auto-config.js';
+import { globalApprovalManager } from './approval-manager.js';
 
 function isProviderId(v: string): v is WebProviderId {
   return (WEB_PROVIDER_IDS as string[]).includes(v);
@@ -2160,6 +2161,46 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
       return await opts.manager.testRouterGroup(id);
     } catch (e) {
       return reply.status(400).send({ error: { message: e instanceof Error ? e.message : String(e) } });
+    }
+  });
+
+  // --- Centralized Approval Manager Routes ---
+  app.get('/api/gateway/approvals', async (req) => {
+    const q = (req.query || {}) as { status?: string };
+    return {
+      requests: globalApprovalManager.listRequests(q.status as any),
+    };
+  });
+
+  app.get('/api/gateway/approvals/audit', async (req) => {
+    const q = (req.query || {}) as { limit?: string };
+    const limit = q.limit ? Number(q.limit) : 100;
+    return {
+      auditLogs: globalApprovalManager.getAuditLogs(limit),
+    };
+  });
+
+  app.post('/api/gateway/approvals/:id/approve', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      const body = (req.body || {}) as { actor?: string };
+      const actor = body.actor || 'local_user';
+      const result = globalApprovalManager.approve(id, actor);
+      return { ok: true, approval: result };
+    } catch (e) {
+      return reply.status(400).send({ error: { message: (e as Error).message } });
+    }
+  });
+
+  app.post('/api/gateway/approvals/:id/reject', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      const body = (req.body || {}) as { actor?: string };
+      const actor = body.actor || 'local_user';
+      const result = globalApprovalManager.reject(id, actor);
+      return { ok: true, approval: result };
+    } catch (e) {
+      return reply.status(400).send({ error: { message: (e as Error).message } });
     }
   });
 }
