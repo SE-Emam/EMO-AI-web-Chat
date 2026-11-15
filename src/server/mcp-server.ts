@@ -223,10 +223,10 @@ export function registerMcpServer(app: FastifyInstance, opts: McpServerOptions =
         reply.status(401).send({ error: { message: 'Invalid or missing API key', type: 'authentication_error' } });
         return false;
       }
-      if (auth.scope === 'group') {
+      if (auth.scope !== 'mcp' && auth.scope !== 'all') {
         reply.status(403).send({
           error: {
-            message: 'Access denied: Scoped router group keys cannot access MCP tools.',
+            message: `Access denied: Keys with scope "${auth.scope}" cannot access MCP tools. Only "mcp" or "all" scopes are permitted.`,
             code: 'INSUFFICIENT_SCOPE',
           },
         });

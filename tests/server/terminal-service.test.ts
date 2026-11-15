@@ -66,7 +66,7 @@ describe('Secure Terminal Service', () => {
     assert.ok(approvalId, 'Must generate approval ID');
 
     // 2. User approves the request
-    approvalMgr.approve(approvalId, 'admin:local_admin');
+    approvalMgr.approve(approvalId, 'human:local_operator:test_session_1');
 
     // 3. Re-execute with approval_id
     const res = await terminal.executeCommand(

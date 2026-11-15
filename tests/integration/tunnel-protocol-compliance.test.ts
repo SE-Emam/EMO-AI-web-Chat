@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { OpenAiTunnelPoller, DedicatedMcpProxy } from '../../src/server/mcp-tunnel-server.js';
+import { OpenAiTunnelPoller, DedicatedMcpProxy, parseResponseTimeout } from '../../src/server/mcp-tunnel-server.js';
 
 describe('Real Integration: OpenAI Secure Tunnel Protocol & Port Isolation', () => {
   let mockControlPlane: http.Server;
@@ -16,6 +16,7 @@ describe('Real Integration: OpenAI Secure Tunnel Protocol & Port Isolation', () 
 
   const responsesReceived = new Map<string, { body: any; headers: http.IncomingHttpHeaders }>();
   let pollCount = 0;
+  let routedTokenSentByPoller: string | null = null;
 
   before(async () => {
     // 1. Mock Local MCP Server
@@ -26,6 +27,9 @@ describe('Real Integration: OpenAI Secure Tunnel Protocol & Port Isolation', () 
         return { jsonrpc: '2.0', id: body.id, result: { tools: [{ name: 'read_file' }] } };
       }
       return { jsonrpc: '2.0', id: body?.id ?? 1, result: { content: 'Executed successfully' } };
+    });
+    localMcpApp.delete('/mcp', async () => {
+      return '';
     });
     await localMcpApp.listen({ port: 0, host: '127.0.0.1' });
     const mcpAddr = localMcpApp.server.address() as any;
@@ -40,10 +44,17 @@ describe('Real Integration: OpenAI Secure Tunnel Protocol & Port Isolation', () 
         // Verify capability header
         assert.equal(req.headers['x-tunnel-client-capabilities'], 'wrong-cluster-v1');
         assert.equal(req.headers['authorization'], `Bearer ${apiKey}`);
+        assert.equal(req.headers['x-tunnel-client-name'], 'emo-ai-web');
+        assert.equal(req.headers['x-tunnel-client-version'], '0.1.0');
+        assert.equal(req.headers['x-tunnel-client-wire-protocol-version'], '2026-08-25');
+
+        if (req.headers['x-tunnel-shard-token']) {
+          routedTokenSentByPoller = req.headers['x-tunnel-shard-token'] as string;
+        }
 
         if (pollCount === 1) {
           // Deliver JSON-RPC command
-          res.writeHead(200, { 'Content-Type': 'application/json', 'x-tunnel-polling-token': 'token_alpha' });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(
             JSON.stringify({
               commands: [
@@ -52,7 +63,7 @@ describe('Real Integration: OpenAI Secure Tunnel Protocol & Port Isolation', () 
                   shard_token: expectedShardToken,
                   command_type: 'jsonrpc',
                   channel: 'test-channel',
-                  response_timeout: 30,
+                  response_timeout: '30s',
                   headers: { 'mcp-session-id': 'sess_123' },
                   jsonrpc: { jsonrpc: '2.0', id: 42, method: 'tools/list', params: {} },
                 },
@@ -72,7 +83,8 @@ describe('Real Integration: OpenAI Secure Tunnel Protocol & Port Isolation', () 
                   request_id: 'req_002',
                   shard_token: 'shard_term_456',
                   command_type: 'session_termination',
-                  response_timeout: 30,
+                  response_timeout: '30s',
+                  headers: { 'mcp-session-id': 'sess_term_99' },
                 },
               ],
             })
@@ -81,7 +93,7 @@ describe('Real Integration: OpenAI Secure Tunnel Protocol & Port Isolation', () 
         }
 
         if (pollCount === 3) {
-          // Deliver unknown command type
+          // Deliver unknown command type & expired command (0s timeout)
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(
             JSON.stringify({
@@ -90,9 +102,33 @@ describe('Real Integration: OpenAI Secure Tunnel Protocol & Port Isolation', () 
                   request_id: 'req_003',
                   shard_token: 'shard_unk_999',
                   command_type: 'unknown_vendor_op',
-                  response_timeout: 30,
+                  response_timeout: '30s',
+                },
+                {
+                  request_id: 'req_004_expired',
+                  shard_token: 'shard_exp_000',
+                  command_type: 'jsonrpc',
+                  response_timeout: '0s',
+                  jsonrpc: { jsonrpc: '2.0', id: 44, method: 'tools/list', params: {} },
                 },
               ],
+            })
+          );
+          return;
+        }
+
+        if (pollCount === 4) {
+          // Issue HTTP 409 Conflict with wrong_cluster routing correction
+          res.writeHead(409, {
+            'Content-Type': 'application/json',
+            'x-tunnel-shard-token': 'placement_token_cluster_east',
+          });
+          res.end(
+            JSON.stringify({
+              error: {
+                code: 'wrong_cluster',
+                policy_revision: 42,
+              },
             })
           );
           return;
@@ -167,7 +203,7 @@ describe('Real Integration: OpenAI Secure Tunnel Protocol & Port Isolation', () 
       assert.equal(res1.body.request_id, 'req_001');
       assert.equal(res1.body.channel, 'test-channel');
       assert.equal(res1.body.resp_code, 200);
-      assert.equal(res1.body.resp_type, 'jsonrpc');
+      assert.equal(res1.body.resp_type, 'jsonrpc_response');
       assert.deepEqual(res1.body.resp_json, {
         jsonrpc: '2.0',
         id: 42,
@@ -185,17 +221,48 @@ describe('Real Integration: OpenAI Secure Tunnel Protocol & Port Isolation', () 
       // 2. Verify Session Termination command handling
       const res2 = await waitForResponse('req_002');
       assert.equal(res2.body.request_id, 'req_002');
-      assert.equal(res2.body.resp_type, 'session_termination');
+      assert.equal(res2.body.resp_code, 204);
+      assert.equal(res2.body.resp_type, 'session_termination_response');
       assert.equal(res2.headers['x-tunnel-shard-token'], 'shard_term_456');
+      assert.equal(res2.body.resp_json, undefined); // No resp_json on termination ack
 
-      // 3. Verify Unknown Command Type rejection with 400
-      const res3 = await waitForResponse('req_003');
-      assert.equal(res3.body.request_id, 'req_003');
-      assert.equal(res3.body.resp_code, 400);
-      assert.equal(res3.body.resp_type, 'error');
+      // 3. Verify Unknown Command Type is dropped without posting invalid response
+      await new Promise((r) => setTimeout(r, 200));
+      assert.equal(responsesReceived.has('req_003'), false);
+
+      // 4. Verify Expired Command (0s timeout) is dropped without contacting MCP or posting response
+      assert.equal(responsesReceived.has('req_004_expired'), false);
+
+      // 5. Verify 409 wrong_cluster routing correction installs placement token on next poll
+      const startWait = Date.now();
+      while (Date.now() - startWait < 3000) {
+        if (routedTokenSentByPoller === 'placement_token_cluster_east') break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      assert.equal(routedTokenSentByPoller, 'placement_token_cluster_east');
     } finally {
       poller.stop();
     }
+  });
+
+  test('parseResponseTimeout adheres strictly to official wire duration grammar', () => {
+    assert.equal(parseResponseTimeout('30s'), 30000);
+    assert.equal(parseResponseTimeout('4500ms'), 4500);
+    assert.equal(parseResponseTimeout('0s'), 0);
+    assert.equal(parseResponseTimeout('2m'), 120000);
+    assert.equal(parseResponseTimeout('1h'), 3600000);
+    assert.equal(parseResponseTimeout('1000us'), 1);
+    assert.equal(parseResponseTimeout('1000000ns'), 1);
+
+    // Invalid formats fail open returning null
+    assert.equal(parseResponseTimeout(null), null);
+    assert.equal(parseResponseTimeout(undefined), null);
+    assert.equal(parseResponseTimeout(''), null);
+    assert.equal(parseResponseTimeout('30'), null);
+    assert.equal(parseResponseTimeout('-1s'), null);
+    assert.equal(parseResponseTimeout('1m30s'), null);
+    assert.equal(parseResponseTimeout(' 30s '), null);
+    assert.equal(parseResponseTimeout('30d'), null);
   });
 
   test('DedicatedMcpProxy: Exposes ONLY /mcp and /health, completely blocks management & completions', async () => {

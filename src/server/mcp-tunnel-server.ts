@@ -25,13 +25,31 @@ export interface TunnelState {
   error?: string | null;
 }
 
+export function parseResponseTimeout(val: unknown): number | null {
+  if (typeof val !== "string") return null;
+  const match = val.match(/^(\d+)(ns|us|ms|s|m|h)$/);
+  if (!match) return null;
+  const num = parseInt(match[1], 10);
+  const unit = match[2];
+  switch (unit) {
+    case "ns": return Math.max(0, Math.floor(num / 1_000_000));
+    case "us": return Math.max(0, Math.floor(num / 1_000));
+    case "ms": return num;
+    case "s": return num * 1000;
+    case "m": return num * 60_000;
+    case "h": return num * 3_600_000;
+    default: return null;
+  }
+}
+
 export interface TunnelCommand {
   request_id: string;
   shard_token: string;
   command_type: 'jsonrpc' | 'session_termination' | string;
   channel?: string;
-  response_timeout?: number;
-  headers?: Record<string, string>;
+  created_at?: string;
+  response_timeout?: string | number | null;
+  headers?: Record<string, string | string[]>;
   jsonrpc?: unknown;
 }
 
@@ -134,7 +152,8 @@ export class DedicatedMcpProxy {
 export class OpenAiTunnelPoller {
   private running = false;
   private abortController: AbortController | null = null;
-  private pollingToken: string | null = null;
+  private routingShardToken: string | null = null;
+  private lastPolicyRevision = -1;
 
   constructor(
     private readonly tunnelId: string,
@@ -163,8 +182,8 @@ export class OpenAiTunnelPoller {
   }
 
   private async pollLoop(): Promise<void> {
-    const base = this.baseUrl.replace(/\/$/, '');
-    const pollUrl = `${base}/v1/tunnels/${encodeURIComponent(this.tunnelId)}/poll`;
+    const base = this.baseUrl.replace(/\/$/, "");
+    const pollUrl = `${base}/v1/tunnels/${encodeURIComponent(this.tunnelId)}/poll?limit=25&timeout_ms=15000`;
     const responseUrl = `${base}/v1/tunnels/${encodeURIComponent(this.tunnelId)}/response`;
 
     while (this.running) {
@@ -173,9 +192,13 @@ export class OpenAiTunnelPoller {
           Authorization: `Bearer ${this.apiKey}`,
           Accept: 'application/json',
           'X-Tunnel-Client-Capabilities': 'wrong-cluster-v1',
+          'X-Tunnel-Client-Name': 'emo-ai-web',
+          'X-Tunnel-Client-Version': '0.1.0',
+          'X-Tunnel-Client-Wire-Protocol-Version': '2026-08-25',
+          'X-Tunnel-MCP-Server-Info': JSON.stringify({ version: 1, channels: [{ name: 'main' }] }),
         };
-        if (this.pollingToken) {
-          headers['X-Tunnel-Polling-Token'] = this.pollingToken;
+        if (this.routingShardToken) {
+          headers['X-Tunnel-Shard-Token'] = this.routingShardToken;
         }
 
         const res = await fetch(pollUrl, {
@@ -186,32 +209,32 @@ export class OpenAiTunnelPoller {
 
         if (res.status === 200) {
           this.onStateChange?.('running', null);
-          const newToken = res.headers.get('x-tunnel-polling-token');
-          if (newToken) this.pollingToken = newToken;
-
+          const localReceiptMonotonic = process.hrtime.bigint();
           const data = (await res.json()) as TunnelPollResponse;
           const commands = Array.isArray(data?.commands) ? data.commands : [];
 
           for (const cmd of commands) {
-            await this.handleCommand(cmd, responseUrl);
+            await this.handleCommand(cmd, responseUrl, localReceiptMonotonic);
           }
-        } else if (res.status === 204 || res.status === 408 || res.status === 504) {
+        } else if (res.status === 204) {
           this.onStateChange?.('running', null);
           continue;
+        } else if (res.status === 409) {
+          // Check for wrong_cluster routing correction (protocol.md / routing-correction.md)
+          const errBody = await res.json().catch(() => ({}));
+          if (errBody?.error?.code === 'wrong_cluster') {
+            const shardToken = res.headers.get('x-tunnel-shard-token');
+            const policyRevision = errBody?.error?.policy_revision;
+            if (shardToken && typeof policyRevision === 'number' && policyRevision >= this.lastPolicyRevision) {
+              this.routingShardToken = shardToken;
+              this.lastPolicyRevision = policyRevision;
+            }
+          }
+          await new Promise((r) => setTimeout(r, 500));
         } else if (res.status === 401 || res.status === 403) {
           const authErr = `Authentication failed (HTTP ${res.status}). Check your OpenAI API key and tunnel permissions.`;
           this.onStateChange?.('error', authErr);
           await new Promise((r) => setTimeout(r, 10_000));
-        } else if (res.status === 400) {
-          // Check for wrong_cluster error
-          const errBody = await res.json().catch(() => ({}));
-          if (errBody?.error?.code === 'wrong_cluster') {
-            const redirectToken = res.headers.get('x-tunnel-polling-token');
-            if (redirectToken) {
-              this.pollingToken = redirectToken;
-            }
-          }
-          await new Promise((r) => setTimeout(r, 2_000));
         } else {
           await new Promise((r) => setTimeout(r, 3_000));
         }
@@ -223,16 +246,47 @@ export class OpenAiTunnelPoller {
     }
   }
 
-  private async handleCommand(cmd: TunnelCommand, responseUrl: string): Promise<void> {
-    const receivedAt = Date.now();
-    const timeoutMs = (cmd.response_timeout ?? 30) * 1000;
+  private async handleCommand(
+    cmd: TunnelCommand,
+    responseUrl: string,
+    localReceiptMonotonic: bigint
+  ): Promise<void> {
+    const timeoutMs = parseResponseTimeout(cmd.response_timeout);
+    let deadline: bigint | null = null;
+    if (timeoutMs !== null) {
+      deadline = localReceiptMonotonic + BigInt(timeoutMs) * 1_000_000n;
+    }
 
-    // Check monotonic expiration
-    if (Date.now() - receivedAt > timeoutMs) {
+    // Check monotonic expiration before starting work
+    if (deadline !== null && process.hrtime.bigint() > deadline) {
       return;
     }
 
     if (cmd.command_type === 'session_termination') {
+      let sessionId: string | undefined;
+      if (cmd.headers) {
+        for (const [k, v] of Object.entries(cmd.headers)) {
+          if (k.toLowerCase() === 'mcp-session-id') {
+            sessionId = Array.isArray(v) ? v[0] : String(v);
+            break;
+          }
+        }
+      }
+
+      if (sessionId) {
+        await fetch(`http://127.0.0.1:${this.localMcpPort}/mcp`, {
+          method: 'DELETE',
+          headers: {
+            ...(this.gatewayApiKey ? { Authorization: `Bearer ${this.gatewayApiKey}` } : {}),
+            'mcp-session-id': sessionId,
+          },
+        }).catch(() => {});
+      }
+
+      if (deadline !== null && process.hrtime.bigint() > deadline) {
+        return;
+      }
+
       await fetch(responseUrl, {
         method: 'POST',
         headers: {
@@ -243,43 +297,94 @@ export class OpenAiTunnelPoller {
         },
         body: JSON.stringify({
           request_id: cmd.request_id,
-          channel: cmd.channel,
-          resp_code: 200,
-          resp_type: 'session_termination',
-          resp_headers: {},
-          resp_json: { ok: true },
+          channel: cmd.channel || 'main',
+          resp_code: 204,
+          resp_type: 'session_termination_response',
         }),
       }).catch(() => {});
       return;
     }
 
     if (cmd.command_type === 'jsonrpc') {
+      let mcpAbortController: AbortController | undefined;
+      let timer: NodeJS.Timeout | undefined;
+
+      if (deadline !== null) {
+        const remainingMs = Number((deadline - process.hrtime.bigint()) / 1_000_000n);
+        if (remainingMs <= 0) return;
+        mcpAbortController = new AbortController();
+        timer = setTimeout(() => mcpAbortController?.abort(), remainingMs);
+      }
+
       const forwardHeaders: Record<string, string> = {
         'Content-Type': 'application/json',
       };
       if (this.gatewayApiKey) {
         forwardHeaders.Authorization = `Bearer ${this.gatewayApiKey}`;
       }
-      if (cmd.headers?.['mcp-session-id']) {
-        forwardHeaders['mcp-session-id'] = cmd.headers['mcp-session-id'];
-      }
-      if (cmd.headers?.['mcp-protocol-version']) {
-        forwardHeaders['mcp-protocol-version'] = cmd.headers['mcp-protocol-version'];
+      if (cmd.headers) {
+        for (const [k, v] of Object.entries(cmd.headers)) {
+          const lk = k.toLowerCase();
+          const valStr = Array.isArray(v) ? v.join(', ') : String(v);
+          if (lk === 'mcp-session-id') forwardHeaders['mcp-session-id'] = valStr;
+          if (lk === 'mcp-protocol-version') forwardHeaders['mcp-protocol-version'] = valStr;
+        }
       }
 
       let mcpStatusCode = 200;
       let mcpPayload: unknown;
+      const respHeaders: Record<string, string[]> = {
+        'Content-Type': ['application/json'],
+      };
+
       try {
         const mcpRes = await fetch(`http://127.0.0.1:${this.localMcpPort}/mcp`, {
           method: 'POST',
           headers: forwardHeaders,
           body: JSON.stringify(cmd.jsonrpc),
+          signal: mcpAbortController?.signal,
         });
         mcpStatusCode = mcpRes.status;
         mcpPayload = await mcpRes.json().catch(() => ({}));
+
+        const allowlist = [
+          'content-type',
+          'mcp-session-id',
+          'mcp-protocol-version',
+          'last-event-id',
+          'access-control-expose-headers',
+          'www-authenticate',
+          'x-tunnel-mcp-request-id',
+        ];
+        mcpRes.headers.forEach((val, key) => {
+          if (allowlist.includes(key.toLowerCase())) {
+            respHeaders[key] = [val];
+          }
+        });
       } catch (e: any) {
+        if (e?.name === 'AbortError' || (deadline !== null && process.hrtime.bigint() > deadline)) {
+          return;
+        }
         mcpStatusCode = 502;
-        mcpPayload = { error: { code: -32603, message: 'Local MCP endpoint unavailable', details: e?.message } };
+        mcpPayload = {
+          error: {
+            code: -32603,
+            message: 'Bad Gateway',
+            data: {
+              tunnel_failure: {
+                version: 1,
+                source: 'connect',
+                upstream_response_received: false,
+              },
+            },
+          },
+        };
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+
+      if (deadline !== null && process.hrtime.bigint() > deadline) {
+        return;
       }
 
       await fetch(responseUrl, {
@@ -292,37 +397,18 @@ export class OpenAiTunnelPoller {
         },
         body: JSON.stringify({
           request_id: cmd.request_id,
-          channel: cmd.channel,
+          channel: cmd.channel || 'main',
           resp_code: mcpStatusCode,
-          resp_type: 'jsonrpc',
-          resp_headers: {
-            'content-type': 'application/json',
-            ...(cmd.headers?.['mcp-session-id'] ? { 'mcp-session-id': cmd.headers['mcp-session-id'] } : {}),
-          },
+          resp_type: 'jsonrpc_response',
+          resp_headers: respHeaders,
           resp_json: mcpPayload,
         }),
       }).catch(() => {});
       return;
     }
 
-    // Unknown command type — reject with 400
-    await fetch(responseUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json',
-        'X-Tunnel-Shard-Token': cmd.shard_token,
-        'X-Tunnel-Client-Capabilities': 'wrong-cluster-v1',
-      },
-      body: JSON.stringify({
-        request_id: cmd.request_id,
-        channel: cmd.channel,
-        resp_code: 400,
-        resp_type: 'error',
-        resp_headers: {},
-        resp_json: { error: 'UNKNOWN_COMMAND_TYPE', command_type: cmd.command_type },
-      }),
-    }).catch(() => {});
+    // Future / Unknown command type: log with request_id and continue polling without executing
+    console.warn(`[OpenAiTunnelPoller] Unsupported command_type "${cmd.command_type}" on request_id "${cmd.request_id}". Ignoring.`);
   }
 }
 

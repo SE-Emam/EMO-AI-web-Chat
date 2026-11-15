@@ -26,10 +26,11 @@ jobs:
       - name: Dependency Vulnerability Audit
         run: npm audit --audit-level=high
 
-      - name: Repository Secret Scanning
+      - name: Comprehensive Repository Secret Scanning
         run: |
           echo "Scanning codebase for exposed credential patterns..."
-          if git grep -iE 'ghp_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{22,}|AKIA[0-9A-Z]{16}' -- ':!tests' ':!src/server/secret-redaction.ts'; then
+          PATTERNS='(ghp_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{22,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|sk-proj-[A-Za-z0-9_-]{40,}|sk-ant-api[A-Za-z0-9_-]{40,}|BEGIN (RSA|EC|OPENSSH|DSA|PGP)? PRIVATE KEY)'
+          if git grep -iE "$PATTERNS" -- ':!tests' ':!src/server/secret-redaction.ts'; then
             echo "CRITICAL: Live credentials detected in repository!"
             exit 1
           fi
@@ -38,7 +39,7 @@ jobs:
       - name: TypeScript Typecheck
         run: npm run typecheck
 
-      - name: Run Full Test Suite (107 Tests across 16 Suites)
+      - name: Run Full Test Suite (116 Tests across 17 Suites)
         run: npm test
 
       - name: Production Build

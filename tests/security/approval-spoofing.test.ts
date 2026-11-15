@@ -30,10 +30,16 @@ describe('Approval Spoofing & Cryptographic Binding Verification', () => {
       );
     }
 
-    // Only authorized admin identity can approve
-    const approved = mgr.approve(req.id, 'admin:master_key_1');
+    // Admin identity is strictly rejected
+    assert.throws(
+      () => mgr.approve(req.id, 'admin:master_key_1'),
+      /Admin API keys cannot approve operations/
+    );
+
+    // Only server-verified local human session can approve
+    const approved = mgr.approve(req.id, 'human:local_operator:master_sess_1');
     assert.equal(approved.status, 'approved');
-    assert.equal(approved.decisionBy, 'admin:master_key_1');
+    assert.equal(approved.decisionBy, 'human:local_operator:master_sess_1');
   });
 
   test('Argument tampering: consuming with modified arguments fails cryptographically', () => {
@@ -47,7 +53,7 @@ describe('Approval Spoofing & Cryptographic Binding Verification', () => {
       args: originalArgs,
     });
 
-    mgr.approve(req.id, 'admin:sec_admin');
+    mgr.approve(req.id, 'human:local_operator:sec_admin');
 
     // Tampered payload fails
     const tamperedResult = mgr.consume({
@@ -83,7 +89,7 @@ describe('Approval Spoofing & Cryptographic Binding Verification', () => {
       args,
     });
 
-    mgr.approve(req.id, 'admin:user');
+    mgr.approve(req.id, 'human:local_operator:user');
 
     // Attempting to consume for delete_file instead of read_file fails
     const result = mgr.consume({
@@ -105,7 +111,7 @@ describe('Approval Spoofing & Cryptographic Binding Verification', () => {
       args,
     });
 
-    mgr.approve(req.id, 'admin:user');
+    mgr.approve(req.id, 'human:local_operator:user');
 
     // Attempting to consume on a sensitive target
     const result = mgr.consume({
@@ -127,7 +133,7 @@ describe('Approval Spoofing & Cryptographic Binding Verification', () => {
       args,
     });
 
-    mgr.approve(req.id, 'admin:user');
+    mgr.approve(req.id, 'human:local_operator:user');
 
     // Rogue agent B tries to steal the approval token
     const result = mgr.consume({
@@ -149,7 +155,7 @@ describe('Approval Spoofing & Cryptographic Binding Verification', () => {
       args,
     });
 
-    mgr.approve(req.id, 'admin:user');
+    mgr.approve(req.id, 'human:local_operator:user');
 
     const first = mgr.consume({
       id: req.id,

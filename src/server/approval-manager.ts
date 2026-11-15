@@ -183,9 +183,14 @@ export class ApprovalManager {
     // SECURITY: Strictly require authorized human or admin identity.
     // Self-approval by agents or untrusted entities is strictly forbidden.
     const cleanActor = String(actor || '').trim();
-    if (!cleanActor.startsWith('human:') && !cleanActor.startsWith('admin:')) {
+    if (cleanActor.startsWith('admin:')) {
       throw new Error(
-        `SECURITY_VIOLATION: Approvals require an authorized operator identity ("${cleanActor}"). Agent self-approval or untrusted entities are strictly forbidden.`
+        `SECURITY_VIOLATION: Admin API keys cannot approve operations. Approvals strictly require an authenticated local human session ("${cleanActor}").`
+      );
+    }
+    if (!cleanActor.startsWith('human:local_operator:')) {
+      throw new Error(
+        `SECURITY_VIOLATION: Approvals require an authorized local human operator session ("${cleanActor}"). Agent self-approval or untrusted entities are strictly forbidden.`
       );
     }
 
@@ -216,9 +221,14 @@ export class ApprovalManager {
 
   reject(id: string, actor: string): ApprovalRequest {
     const cleanActor = String(actor || '').trim();
-    if (!cleanActor.startsWith('human:') && !cleanActor.startsWith('admin:')) {
+    if (cleanActor.startsWith('admin:')) {
       throw new Error(
-        `SECURITY_VIOLATION: Rejections require an authorized operator identity ("${cleanActor}"). Agent or untrusted rejection is strictly forbidden.`
+        `SECURITY_VIOLATION: Admin API keys cannot reject operations. Rejections strictly require an authenticated local human session ("${cleanActor}").`
+      );
+    }
+    if (!cleanActor.startsWith('human:local_operator:')) {
+      throw new Error(
+        `SECURITY_VIOLATION: Rejections require an authorized local human operator session ("${cleanActor}"). Agent or untrusted rejection is strictly forbidden.`
       );
     }
 

@@ -183,18 +183,46 @@ describe('Real Fastify Integration: Human Session & CSRF Approval Hardening', ()
     assert.match(res.json().error.message, /HUMAN_SESSION_REQUIRED/);
   });
 
-  test('Attack 7: CSRF protection: Approval with valid session cookie but MISSING CSRF token fails with 403', async () => {
-    const loginRes = await appApiKeyRequired.inject({
+  test('Attack 7: Agent attempting to use Admin API Key or MCP Key to create human session is rejected', async () => {
+    const resBody = await appApiKeyRequired.inject({
       method: 'POST',
       url: '/api/gateway/session/login',
       body: { apiKey: adminKey },
     });
-    assert.equal(loginRes.statusCode, 200);
-    const loginData = loginRes.json();
-    assert.ok(loginData.sessionId);
-    assert.ok(loginData.csrfToken);
+    assert.equal(resBody.statusCode, 403);
+    assert.match(resBody.json().error.message, /AGENT_LOGIN_PROHIBITED/);
 
-    const sessionCookie = `emo_session_id=${loginData.sessionId}`;
+    const resHeader = await appApiKeyRequired.inject({
+      method: 'POST',
+      url: '/api/gateway/session/login',
+      headers: { authorization: `Bearer ${adminKey}` },
+    });
+    assert.equal(resHeader.statusCode, 403);
+    assert.match(resHeader.json().error.message, /AGENT_LOGIN_PROHIBITED/);
+
+    const resMcp = await appApiKeyRequired.inject({
+      method: 'POST',
+      url: '/api/gateway/session/login',
+      body: { apiKey: mcpKey },
+    });
+    assert.equal(resMcp.statusCode, 403);
+    assert.match(resMcp.json().error.message, /AGENT_LOGIN_PROHIBITED/);
+  });
+
+  test('Attack 8: Cross-origin request (sec-fetch-site: cross-site) is rejected on session endpoints', async () => {
+    const res = await appApiKeyRequired.inject({
+      method: 'POST',
+      url: '/api/gateway/session/login',
+      headers: { 'sec-fetch-site': 'cross-site' },
+      body: { passcode: globalHumanSessionManager.getLocalOperatorPasscode() },
+    });
+    assert.equal(res.statusCode, 403);
+    assert.match(res.json().error.message, /CROSS_SITE_PROHIBITED/);
+  });
+
+  test('Attack 9: CSRF protection: Approval with valid session cookie but MISSING CSRF token fails with 403', async () => {
+    const session = globalHumanSessionManager.createSession('human:local_operator');
+    const sessionCookie = `emo_session_id=${session.id}`;
 
     const req = globalApprovalManager.createRequest({
       toolName: 'write_file',
@@ -215,8 +243,8 @@ describe('Real Fastify Integration: Human Session & CSRF Approval Hardening', ()
     assert.match(approveRes.json().error.message, /CSRF_VALIDATION_FAILED/);
   });
 
-  test('Attack 8: CSRF protection: Tampered CSRF token fails with 403', async () => {
-    const session = globalHumanSessionManager.createSession('human:operator');
+  test('Attack 10: CSRF protection: Tampered CSRF token fails with 403', async () => {
+    const session = globalHumanSessionManager.createSession('human:local_operator');
     const req = globalApprovalManager.createRequest({
       toolName: 'write_file',
       clientIdentity: 'agent:test',
@@ -237,7 +265,7 @@ describe('Real Fastify Integration: Human Session & CSRF Approval Hardening', ()
     assert.match(approveRes.json().error.message, /CSRF_VALIDATION_FAILED/);
   });
 
-  test('Attack 9: CSRF token from another session is rejected with 403', async () => {
+  test('Attack 11: CSRF token from another session is rejected with 403', async () => {
     const sessionA = globalHumanSessionManager.createSession('human:operator_a');
     const sessionB = globalHumanSessionManager.createSession('human:operator_b');
 
@@ -261,9 +289,41 @@ describe('Real Fastify Integration: Human Session & CSRF Approval Hardening', ()
     assert.match(approveRes.json().error.message, /CSRF_VALIDATION_FAILED/);
   });
 
-  test('Legitimate Flow: Authenticated Human Session with matching CSRF token approves successfully', async () => {
-    const session = globalHumanSessionManager.createSession('human:local_operator');
+  test('Legitimate Flow: Interactive local operator login sets HttpOnly cookie without leaking sessionId in JSON, obtains CSRF via dedicated endpoint and approves', async () => {
+    const passcode = globalHumanSessionManager.getLocalOperatorPasscode();
+    const loginRes = await appApiKeyRequired.inject({
+      method: 'POST',
+      url: '/api/gateway/session/login',
+      body: { passcode },
+    });
+    assert.equal(loginRes.statusCode, 200);
+    const loginData = loginRes.json();
+    assert.equal(loginData.ok, true);
+    // Crucial: sessionId is NOT leaked in the JSON response body
+    assert.equal(loginData.sessionId, undefined);
+    assert.equal(loginData.csrfToken, undefined);
 
+    const setCookie = loginRes.headers['set-cookie'] as string;
+    assert.ok(setCookie);
+    assert.match(setCookie, /emo_session_id=/);
+    assert.match(setCookie, /HttpOnly/i);
+    assert.match(setCookie, /SameSite=Strict/i);
+
+    const match = setCookie.match(/emo_session_id=([a-f0-9]+)/);
+    assert.ok(match);
+    const cookie = `emo_session_id=${match[1]}`;
+
+    // Obtain CSRF token securely via dedicated endpoint using HttpOnly cookie
+    const csrfRes = await appApiKeyRequired.inject({
+      method: 'GET',
+      url: '/api/gateway/session/csrf',
+      headers: { cookie },
+    });
+    assert.equal(csrfRes.statusCode, 200);
+    const csrfToken = csrfRes.json().csrfToken;
+    assert.ok(csrfToken);
+
+    // Request approval
     const req = globalApprovalManager.createRequest({
       toolName: 'write_file',
       clientIdentity: 'agent:test',
@@ -275,8 +335,8 @@ describe('Real Fastify Integration: Human Session & CSRF Approval Hardening', ()
       method: 'POST',
       url: `/api/gateway/approvals/${req.id}/approve`,
       headers: {
-        cookie: `emo_session_id=${session.id}`,
-        'x-csrf-token': session.csrfToken,
+        cookie,
+        'x-csrf-token': csrfToken,
       },
     });
 

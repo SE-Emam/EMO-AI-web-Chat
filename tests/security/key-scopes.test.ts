@@ -151,14 +151,16 @@ describe('Key Scope Enforcement & Authorization Isolation', () => {
     assert.ok(body.result.tools);
   });
 
-  test('Admin key can access MCP endpoint (/mcp)', async () => {
+  test('Admin key is blocked on MCP endpoint (/mcp) with 403 INSUFFICIENT_SCOPE', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/mcp',
       headers: { Authorization: `Bearer ${adminKey}` },
       payload: { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
     });
-    assert.equal(res.statusCode, 200);
+    assert.equal(res.statusCode, 403);
+    const body = JSON.parse(res.payload);
+    assert.equal(body.error.code, 'INSUFFICIENT_SCOPE');
   });
 
   test('Scoped router group key is blocked on MCP endpoint with 403 INSUFFICIENT_SCOPE', async () => {

@@ -1971,12 +1971,18 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
   });
 
   app.post('/api/gateway/keys', async (req, reply) => {
-    const body = (req.body || {}) as { name?: string; key?: string };
+    const body = (req.body || {}) as { name?: string; key?: string; scope?: 'admin' | 'mcp' | 'group' | 'all' };
+    const validScopes = ['admin', 'mcp', 'group', 'all'];
+    if (!body.scope || !validScopes.includes(body.scope)) {
+      return reply.status(400).send({
+        error: { message: `Scope is required and must be one of: ${validScopes.join(", ")}` },
+      });
+    }
     try {
-      const item = await opts.manager.addApiKey(body.name || '', body.key);
+      const item = await opts.manager.addApiKey(body.name || '', body.key, body.scope);
       return { key: item };
     } catch (e) {
-      return reply.status(500).send({ error: { message: e instanceof Error ? e.message : String(e) } });
+      return reply.status(400).send({ error: { message: e instanceof Error ? e.message : String(e) } });
     }
   });
 
@@ -2183,19 +2189,34 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
 
   function extractHumanSession(req: FastifyRequest): HumanSession | null {
     const cookies = parseCookies(req.headers.cookie);
-    const sessionToken = cookies['emo_session_id'] || (typeof req.headers['x-session-token'] === 'string' ? req.headers['x-session-token'].trim() : undefined);
+    const sessionToken = cookies['emo_session_id'];
     if (!sessionToken) return null;
     return globalHumanSessionManager.getSession(sessionToken);
   }
 
+  function isLoopbackIp(ip: string): boolean {
+    return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  }
+
   function authenticateHumanSession(req: FastifyRequest): { ok: boolean; session?: HumanSession; error?: string; status?: number } {
+    // 1. Fetch metadata check: reject cross-site requests to approval endpoints
+    const secFetchSite = req.headers['sec-fetch-site'];
+    if (secFetchSite === 'cross-site') {
+      return {
+        ok: false,
+        status: 403,
+        error: 'CROSS_SITE_PROHIBITED: Cross-site requests to approval endpoints are prohibited.',
+      };
+    }
+
+    // 2. Cookie only! (No generic X-Session-Token header)
     const cookies = parseCookies(req.headers.cookie);
-    const sessionToken = cookies['emo_session_id'] || (typeof req.headers['x-session-token'] === 'string' ? req.headers['x-session-token'].trim() : undefined);
+    const sessionToken = cookies['emo_session_id'];
     if (!sessionToken) {
       return {
         ok: false,
         status: 401,
-        error: 'HUMAN_SESSION_REQUIRED: Approval actions require an active, authenticated local human session. Agents and API keys cannot self-approve operations.',
+        error: 'HUMAN_SESSION_REQUIRED: Approval actions require an active, authenticated local human session cookie. Agents and API keys cannot self-approve operations.',
       };
     }
 
@@ -2223,22 +2244,40 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
 
   // --- Human Session Authentication Endpoints ---
   app.post('/api/gateway/session/login', async (req, reply) => {
-    const body = (req.body || {}) as { apiKey?: string };
-    
-    let isAdmin = false;
-    if (body.apiKey && opts.manager && typeof (opts.manager as any).resolveKeyAuth === 'function') {
-      const auth = (opts.manager as any).resolveKeyAuth(body.apiKey);
-      if (auth.valid && (auth.scope === 'admin' || auth.scope === 'all')) {
-        isAdmin = true;
-      }
-    } else if ((req as any).authKeyInfo?.valid && ((req as any).authKeyInfo?.scope === 'admin' || (req as any).authKeyInfo?.scope === 'all')) {
-      isAdmin = true;
+    const body = (req.body || {}) as { apiKey?: string; passcode?: string; localInteractive?: boolean };
+    const authHeader = req.headers.authorization;
+
+    // 1. Strictly block API keys from attempting to bootstrap human sessions!
+    if (body.apiKey || authHeader) {
+      return reply.status(403).send({
+        error: {
+          message: 'AGENT_LOGIN_PROHIBITED: API keys cannot create human operator sessions. Human sessions require interactive local UI verification.',
+          code: 'AGENT_LOGIN_PROHIBITED',
+        },
+      });
     }
 
-    if (!isAdmin) {
+    // 2. Check Fetch Metadata: block cross-site requests
+    const secFetchSite = req.headers['sec-fetch-site'];
+    if (secFetchSite === 'cross-site') {
+      return reply.status(403).send({
+        error: {
+          message: 'CROSS_SITE_PROHIBITED: Cross-origin session login is prohibited.',
+          code: 'CROSS_ORIGIN_PROHIBITED',
+        },
+      });
+    }
+
+    // 3. Local human operator verification: must be from loopback and either pass passcode or interactive local confirmation
+    const clientIp = req.ip || req.raw.socket.remoteAddress || '';
+    const isLoopback = isLoopbackIp(clientIp);
+    const validPasscode = body.passcode && globalHumanSessionManager.verifyLocalOperatorPasscode(body.passcode);
+    const localInteractive = isLoopback && (body.localInteractive === true || validPasscode);
+
+    if (!validPasscode && !localInteractive) {
       return reply.status(401).send({
         error: {
-          message: 'INVALID_CREDENTIALS: An admin-scoped API key is required to bootstrap a local human session.',
+          message: 'LOCAL_OPERATOR_REQUIRED: Interactive human operator verification required.',
           code: 'AUTH_FAILED',
         },
       });
@@ -2251,18 +2290,34 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
       `emo_session_id=${session.id}; Path=/api/gateway/; HttpOnly; SameSite=Strict${isSecure ? '; Secure' : ''}; Max-Age=3600`
     );
 
+    // SECURITY: NEVER return sessionId or csrfToken in login JSON!
     return {
       ok: true,
-      sessionId: session.id,
-      csrfToken: session.csrfToken,
       actor: session.actor,
       expiresAt: session.expiresAt,
     };
   });
 
+  // Dedicated endpoint for local UI to fetch CSRF token using HttpOnly cookie
+  app.get('/api/gateway/session/csrf', async (req, reply) => {
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionToken = cookies['emo_session_id'];
+    if (!sessionToken) {
+      return reply.status(401).send({ error: { message: 'HUMAN_SESSION_REQUIRED', code: 'UNAUTHORIZED' } });
+    }
+    const session = globalHumanSessionManager.getSession(sessionToken);
+    if (!session) {
+      return reply.status(401).send({ error: { message: 'HUMAN_SESSION_EXPIRED', code: 'UNAUTHORIZED' } });
+    }
+    return {
+      ok: true,
+      csrfToken: session.csrfToken,
+    };
+  });
+
   app.post('/api/gateway/session/logout', async (req, reply) => {
     const cookies = parseCookies(req.headers.cookie);
-    const sessionToken = cookies['emo_session_id'] || (typeof req.headers['x-session-token'] === 'string' ? req.headers['x-session-token'].trim() : undefined);
+    const sessionToken = cookies['emo_session_id'];
     if (sessionToken) {
       globalHumanSessionManager.destroySession(sessionToken);
     }
@@ -2281,7 +2336,6 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
     return {
       authenticated: true,
       actor: session.actor,
-      csrfToken: session.csrfToken,
       expiresAt: session.expiresAt,
     };
   });

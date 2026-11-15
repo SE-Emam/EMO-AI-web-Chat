@@ -125,6 +125,17 @@ export class ProviderSessionRouter {
   /**
    * Reset all sessions (used during teardown or restart).
    */
+  /**
+   * Explicitly closes and removes the active session for a provider.
+   */
+  closeSession(providerId: string): void {
+    const existing = this.activeSessions.get(providerId);
+    if (existing) {
+      existing.status = 'closed';
+      this.activeSessions.delete(providerId);
+    }
+  }
+
   resetAll(): void {
     this.activeSessions.clear();
   }

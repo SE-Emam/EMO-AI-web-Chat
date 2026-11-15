@@ -309,9 +309,9 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
 
       // Allow requests with verified local human sessions to access management endpoints
       const cookieHeader = request.headers.cookie;
-      if (url.startsWith('/api/gateway/') && (cookieHeader || request.headers['x-session-token'])) {
+      if (url.startsWith('/api/gateway/') && cookieHeader) {
         const cookies = parseCookies(cookieHeader);
-        const sessionToken = cookies['emo_session_id'] || (typeof request.headers['x-session-token'] === 'string' ? request.headers['x-session-token'].trim() : undefined);
+        const sessionToken = cookies['emo_session_id'];
         if (sessionToken && globalHumanSessionManager.getSession(sessionToken)) {
           return;
         }

@@ -1916,7 +1916,11 @@ export class ProviderManager {
     return [...(this.config.gateway.apiKeys || [])];
   }
 
-  async addApiKey(name: string, customKey?: string, scope: 'admin' | 'mcp' | 'group' | 'all' = 'admin'): Promise<ApiKeyItem> {
+  async addApiKey(name: string, customKey: string | undefined, scope: 'admin' | 'mcp' | 'group' | 'all'): Promise<ApiKeyItem> {
+    const validScopes = ['admin', 'mcp', 'group', 'all'];
+    if (!scope || !validScopes.includes(scope)) {
+      throw new Error(`VALIDATION_ERROR: Scope is required and must be one of: ${validScopes.join(", ")}.`);
+    }
     if (!Array.isArray(this.config.gateway.apiKeys)) this.config.gateway.apiKeys = [];
     const id = 'key_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
     const key = customKey && customKey.trim()
@@ -2070,33 +2074,28 @@ export class ProviderManager {
   }
 
   getValidApiKeys(): string[] {
-    const keys: string[] = [];
-    const masterKey = String(this.config.gateway.apiKey || "").trim();
-    if (masterKey && !isLegacyInsecureKey(masterKey)) keys.push(masterKey);
+    const candidateKeys = new Set<string>();
+    const masterAdmin = String(this.config.gateway.adminApiKey || this.config.gateway.apiKey || "").trim();
+    if (masterAdmin) candidateKeys.add(masterAdmin);
+    const mcpKey = String(this.config.gateway.mcpApiKey || "").trim();
+    if (mcpKey) candidateKeys.add(mcpKey);
     if (Array.isArray(this.config.gateway.apiKeys)) {
       for (const k of this.config.gateway.apiKeys) {
-        const cleanKey = String(k.key || "").trim();
-        if (k.enabled && cleanKey && !isLegacyInsecureKey(cleanKey)) {
-          if (k.expiresAt) {
-            const exp = new Date(k.expiresAt).getTime();
-            if (isNaN(exp) || Date.now() >= exp) continue;
-          }
-          if (["admin", "mcp", "group", "all"].includes(k.scope as string) && !keys.includes(cleanKey)) {
-            keys.push(cleanKey);
-          }
-        }
+        if (k.key) candidateKeys.add(String(k.key).trim());
       }
     }
     if (Array.isArray(this.config.routerGroups)) {
       for (const g of this.config.routerGroups) {
-        if (g.enabled === false) continue;
-        const gk = String((g as any).apiKey || "").trim();
-        if (gk && !isLegacyInsecureKey(gk) && !keys.includes(gk)) {
-          keys.push(gk);
-        }
+        if ((g as any).apiKey) candidateKeys.add(String((g as any).apiKey).trim());
       }
     }
-    return keys;
+    const validKeys: string[] = [];
+    for (const key of candidateKeys) {
+      if (this.resolveKeyAuth(key).valid) {
+        validKeys.push(key);
+      }
+    }
+    return validKeys;
   }
 
   listCustomProviders(): CustomUpstreamProvider[] {

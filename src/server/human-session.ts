@@ -12,9 +12,28 @@ export interface HumanSession {
 export class HumanSessionManager {
   private sessions = new Map<string, HumanSession>();
   private readonly ttlMs: number;
+  private readonly localOperatorPasscode: string;
 
-  constructor(options?: { ttlMs?: number }) {
+  constructor(options?: { ttlMs?: number; passcode?: string }) {
     this.ttlMs = options?.ttlMs ?? 60 * 60 * 1000; // 1 hour session TTL
+    this.localOperatorPasscode = options?.passcode || process.env.LOCAL_OPERATOR_SECRET || randomBytes(24).toString('hex');
+  }
+
+  getLocalOperatorPasscode(): string {
+    return this.localOperatorPasscode;
+  }
+
+  verifyLocalOperatorPasscode(provided?: string): boolean {
+    if (!provided || typeof provided !== 'string') return false;
+    const clean = provided.trim();
+    if (clean.length !== this.localOperatorPasscode.length) return false;
+    try {
+      const a = Buffer.from(clean, 'utf8');
+      const b = Buffer.from(this.localOperatorPasscode, 'utf8');
+      return timingSafeEqual(a, b);
+    } catch {
+      return false;
+    }
   }
 
   createSession(actor = 'human:local_operator'): HumanSession {

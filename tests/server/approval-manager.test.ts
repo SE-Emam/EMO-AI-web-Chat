@@ -26,7 +26,7 @@ describe('Centralized Approval Manager', () => {
     assert.ok(req.expiresAt > req.createdAt);
   });
 
-  test('Admin user can approve a pending request', () => {
+  test('Human local operator can approve a pending request', () => {
     const args = { path: 'app.ts', content: 'console.log(1);' };
     const req = mgr.createRequest({
       toolName: 'write_file',
@@ -35,10 +35,28 @@ describe('Centralized Approval Manager', () => {
       args,
     });
 
-    const approved = mgr.approve(req.id, 'admin:local_admin');
+    const approved = mgr.approve(req.id, 'human:local_operator:test_session_123');
     assert.equal(approved.status, 'approved');
-    assert.equal(approved.decisionBy, 'admin:local_admin');
+    assert.equal(approved.decisionBy, 'human:local_operator:test_session_123');
     assert.ok(approved.decisionAt);
+  });
+
+  test('Admin identity is strictly prevented from approving or rejecting operations', () => {
+    const req = mgr.createRequest({
+      toolName: 'write_file',
+      clientIdentity: 'Agent',
+      target: '/workspace/app.ts',
+      args: { path: 'app.ts' },
+    });
+
+    assert.throws(
+      () => mgr.approve(req.id, 'admin:local_admin'),
+      /Admin API keys cannot approve/
+    );
+    assert.throws(
+      () => mgr.reject(req.id, 'admin:local_admin'),
+      /Admin API keys cannot reject/
+    );
   });
 
   test('Agents are strictly prevented from self-approving operations', () => {
@@ -69,7 +87,7 @@ describe('Centralized Approval Manager', () => {
       args,
     });
 
-    mgr.approve(req.id, 'admin:local_user');
+    mgr.approve(req.id, 'human:local_operator:test_session_123');
 
     // First consumption succeeds
     const firstConsume = mgr.consume({
@@ -103,7 +121,7 @@ describe('Centralized Approval Manager', () => {
       args: originalArgs,
     });
 
-    mgr.approve(req.id, 'admin:local_user');
+    mgr.approve(req.id, 'human:local_operator:test_session_123');
 
     // Attempting to consume with different arguments fails
     const consumed = mgr.consume({
@@ -126,7 +144,7 @@ describe('Centralized Approval Manager', () => {
       args,
     });
 
-    fastMgr.approve(req.id, 'admin:local_user');
+    fastMgr.approve(req.id, 'human:local_operator:test_session_123');
 
     // Wait for expiration
     await new Promise((r) => setTimeout(r, 70));

@@ -104,7 +104,7 @@ describe('Terminal Subcommand Safety & Execution Policies', () => {
     assert.ok(approvalId);
 
     // Admin approves
-    approvalMgr.approve(approvalId, 'admin:local_admin');
+    approvalMgr.approve(approvalId, 'human:local_operator:test_session_1');
 
     // Execution completes with secrets redacted
     const res = await terminal.executeCommand(
