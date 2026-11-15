@@ -1,5 +1,5 @@
 /**
- * Task 12 — SHARED idempotency layer over the ONE RequestBroker
+ * SHARED idempotency layer over the ONE RequestBroker
  * (src/protocol/request-broker.ts — same store, ProcessLock,
  * ExecutionAttachment, markSent/complete/fail/markUnconfirmed semantics).
  *

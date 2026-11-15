@@ -29,7 +29,7 @@ export const DEFAULT_CONFIG: Config = {
   // Derived from WEB_PROVIDERS — do not hardcode URLs here.
   arenaBaseUrl: providerSpec('arena-browser').defaultBaseUrl,
   headless: true,
-  // Task 14 — conservative phase-aware provider timeouts (declarative
+  // conservative phase-aware provider timeouts (declarative
   // defaults; total must never re-execute a sent message).
   providerTimeoutsMs: {
     accept: 30_000,

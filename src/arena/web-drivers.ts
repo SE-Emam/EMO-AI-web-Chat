@@ -14,10 +14,11 @@ import { TabWorkerPool } from './tab-worker-pool.js';
 import { SessionQueue } from '../sessions/session-queue.js';
 import { SCHEDULED_PER_SESSION_NOTES } from './driver-capabilities.js';
 import { stripNeutralCorrections } from './tool-bridge-markers.js';
-import { formatMessages } from './models.js';
+import { formatMessages, extractMessageText } from './models.js';
 import { ProfileBusyError } from './profile-busy-error.js';
 import { OwnerIpcManager } from '../ipc/profile-owner-router.js';
 import { parseToolCallsFromResponse } from '../server/tool-interpreter.js';
+import { providerSessionRouter } from './provider-session-router.js';
 
 /**
  * Generated media (images created by the web chat) is downloaded here so it can
@@ -47,7 +48,7 @@ const CHATGPT_GENERATED_IMAGE_SELECTORS = [
 const TOOL_MODE_MARKER = '### TOOL CALLING MODE (MANDATORY';
 
 /**
- * Builds the prompt for a NEW web chat session (chat-on-steroids approach):
+ * Builds the prompt for a NEW web chat session :
  * keep the tool-calling protocol from the injected system instruction, keep the
  * user's task, and reduce any replayed history (gateway restarted mid-task,
  * multi-turn client context) to a compact recap instead of pasting the whole
@@ -58,12 +59,7 @@ function buildFreshChatPrompt(messages: ChatMessage[], aggressive: boolean): str
   const caps = aggressive
     ? { user: 1200, userLast: 6000, assistant: 400, tool: 1000, sysPlain: 1500 }
     : { user: 1200, userLast: 9000, assistant: 800, tool: 2000, sysPlain: 4000 };
-  const normContent = (c: unknown): string => {
-    if (typeof c === 'string') return c;
-    if (c == null) return '';
-    if (Array.isArray(c)) return c.map((p: any) => (typeof p === 'string' ? p : p?.text || '')).join('\n');
-    try { return JSON.stringify(c); } catch { return String(c); }
-  };
+  const normContent = (c: unknown): string => extractMessageText(c);
   const cap = (s: string, max: number) => {
     if (s.length <= max) return s;
     const head = Math.floor(max * 0.75);
@@ -125,12 +121,7 @@ function compactMessagesForWeb(messages: ChatMessage[], aggressive: boolean): Ch
   const caps = aggressive
     ? { system: 2200, user: 3500, assistant: 700, tool: 900, skipBelow: 0 }
     : { system: 6000, user: 9000, assistant: 1600, tool: 2400, skipBelow: 14000 };
-  const normContent = (c: unknown): string => {
-    if (typeof c === 'string') return c;
-    if (c == null) return '';
-    if (Array.isArray(c)) return c.map((p: any) => (typeof p === 'string' ? p : p?.text || '')).join('\n');
-    try { return JSON.stringify(c); } catch { return String(c); }
-  };
+  const normContent = (c: unknown): string => extractMessageText(c);
   const plain = messages.map((m: any) => normContent(m?.content));
   const total = plain.reduce((n, s) => n + s.length, 0);
   if (total <= caps.skipBelow) return messages;
@@ -184,7 +175,7 @@ export interface WebDriverOptions {
    * verified as *accepted* (a new user turn appears, or the composer clears).
    * "Typed into the composer" and "accepted by the site" are different facts —
    * without this check a silently failed send waits blind for a reply that
-   * never comes (chat-on-steroids distinguishes queued/composed/accepted).
+   * never comes .
    */
   userTurnSelectors?: string[];
   /** Opt-in selectors for generated-image tiles (empty = feature disabled). */
@@ -207,9 +198,7 @@ export class BaseWebDriver implements ArenaDriver {
   protected queue: Promise<void> = Promise.resolve();
 
   /**
-   * Per-task session store (chatgpt-web-tool-bridge lesson: one API key may
-   * serve several agent conversations; a single global "last sent messages"
-   * interleaves them and breaks continuation for both). Keyed by the client's
+   * Per-task session store . Keyed by the client's
    * X-Chat-Session-ID header or a stable task fingerprint.
    */
   protected sessionStates = new Map<string, SessionState>();
@@ -224,9 +213,9 @@ export class BaseWebDriver implements ArenaDriver {
   protected pageEpoch: string = this.browserOwner.epoch;
   /** True after a successful claim of this driver's profile. */
   protected claimedProfile = false;
-  /** Per-session execution lanes (Task 6): same session = serial, different = parallel. */
+  /** Per-session execution lanes : same session = serial, different = parallel. */
   protected readonly sessionQueues = new SessionQueue();
-  /** Session→page scheduling over the existing TabWorkerPool (Task 6). */
+  /** Session→page scheduling over the existing TabWorkerPool . */
   protected tabScheduler: TabScheduler | null = null;
 
   constructor(options: WebDriverOptions) {
@@ -267,7 +256,7 @@ export class BaseWebDriver implements ArenaDriver {
         file,
         JSON.stringify({ savedAt: Date.now(), sessionKey: key, chatUrl: st.sessionChatUrl, lastSentMessages: st.lastSentMessages })
       );
-      // Registry mirror (Task 2): the durable correlation metadata — provider,
+      // Registry mirror : the durable correlation metadata — provider,
       // profile, conversation — readable by any process and by the final
       // report. Best-effort: transcript storage stays the source of truth.
       const current = this.registry.get(this.options.id, key);
@@ -339,7 +328,7 @@ export class BaseWebDriver implements ArenaDriver {
     signal?: AbortSignal,
     sessionKey = 'default'
   ): Promise<string> {
-    // Task 6: per-session lanes instead of one global queue — requests for the
+    // per-session lanes instead of one global queue — requests for the
     // SAME session serialize; requests for DIFFERENT sessions run in parallel
     // on their own pages (scheduler-bound).
     return this.sessionQueues.run(sessionKey, () =>
@@ -348,7 +337,7 @@ export class BaseWebDriver implements ArenaDriver {
   }
 
   /**
-   * Task 13 — declared capabilities: per-session pages over the scheduler,
+   * declared capabilities: per-session pages over the scheduler,
    * durable conversation state restored from the session registry.
    */
   getCapabilities(): import('./driver-capabilities.js').DriverCapabilities {
@@ -361,7 +350,7 @@ export class BaseWebDriver implements ArenaDriver {
     };
   }
 
-  /** Task 14 — breaker key half: the durable profile this driver runs against. */
+  /** breaker key half: the durable profile this driver runs against. */
   getProfileDir(): string | undefined {
     return this.options.config.userDataDir;
   }
@@ -374,17 +363,32 @@ export class BaseWebDriver implements ArenaDriver {
     sessionKey = 'default'
   ): Promise<string> {
     if (signal?.aborted) throw new Error('Request was aborted');
-    // Task 6: the session's OWN page, from the scheduler — never a shared
+    const providerId = this.options.id || 'default';
+    const isAutoFingerprint = /^task-[0-9a-f]{16}$/.test(sessionKey);
+    const isExplicitCustomSession = Boolean(sessionKey && sessionKey !== 'default' && !isAutoFingerprint);
+
+    if (providerSessionRouter.shouldRotate(providerId)) {
+      console.log(`[${this.options.name}] Active session reached turn limit. Rotating to clean conversation.`);
+      const oldKey = providerSessionRouter.getActiveSessionKey(providerId);
+      this.clearSessionState(oldKey);
+      providerSessionRouter.rotateSession(providerId, 'turn_limit_reached');
+    }
+
+    const effectiveSessionKey = isExplicitCustomSession
+      ? sessionKey
+      : providerSessionRouter.getActiveSessionKey(providerId);
+
+    // the session's OWN page, from the scheduler — never a shared
     // driver-level page. Two sessions can run concurrently on different pages.
     const base0 = (this.options.config.baseUrl || '').replace(/\/$/, '');
     const ctx = await this.ensureContext();
-    if (!this.tabScheduler) this.tabScheduler = new TabScheduler(new TabWorkerPool(ctx, { maxTabs: (this.options.config as any).maxTabs || 3 }));
-    const page = await this.tabScheduler.acquireFor(sessionKey, base0 || undefined);
+    if (!this.tabScheduler) this.tabScheduler = new TabScheduler(new TabWorkerPool(ctx, { maxTabs: (this.options.config as any).maxTabs || 1 }));
+    const page = await this.tabScheduler.acquireFor(effectiveSessionKey, base0 || undefined);
     // Diagnostic tag: which web page served which session (also used by tests
     // to assert page identity during concurrent execution).
-    (page as any).__session = sessionKey;
+    (page as any).__session = effectiveSessionKey;
     try {
-    // Ownership housekeeping (Task 3): heartbeat the profile claim with every
+    // Ownership housekeeping : heartbeat the profile claim with every
     // request so a live gateway is never mistaken for a stale one, and refuse
     // to operate on a page from a dead browser incarnation (stale worker).
     if (this.claimedProfile) {
@@ -399,8 +403,8 @@ export class BaseWebDriver implements ArenaDriver {
     // first use so a task that outlived a gateway restart resumes the same
     // web chat instead of a new one). Local binding — parallel sessions each
     // get their own SessionState; no shared mutable driver field.
-    const st = this.getOrCreateSession(sessionKey);
-    console.log(`[${this.options.name}] session=${sessionKey.slice(0, 24)}`);
+    const st = this.getOrCreateSession(effectiveSessionKey);
+    console.log(`[${this.options.name}] session=${effectiveSessionKey.slice(0, 24)}`);
     // The tool interpreter injects a SYNTHETIC user note ("Tool results are
     // provided above...") into every request. The client will never send that
     // message itself, so storing or comparing it corrupts the continuation
@@ -434,14 +438,17 @@ export class BaseWebDriver implements ArenaDriver {
         arguments: normArgs(tc?.function?.arguments ?? tc?.arguments ?? {}),
       },
     }));
-    const normContent = (c: any) => {
-      if (typeof c === 'string') return c;
-      if (c == null) return '';
-      if (Array.isArray(c)) return c.map((p: any) => typeof p === 'string' ? p : (p?.text || '')).join('\n');
-      try { return JSON.stringify(c); } catch { return String(c); }
-    };
+    const normContent = (c: any) => extractMessageText(c);
     const msgKey = (m: any) => {
       if (!m) return m;
+      if (m.role === 'system') {
+        let txt = normContent(m.content);
+        const idx = txt.indexOf(TOOL_MODE_MARKER);
+        if (idx >= 0) txt = txt.slice(0, idx).trim();
+        const corrIdx = txt.indexOf('### CORRECTION');
+        if (corrIdx >= 0) txt = txt.slice(0, corrIdx).trim();
+        return { role: 'system', content: txt };
+      }
       if (m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
         // ignore textual content differences (raw web text vs cleaned/empty) when tool calls match
         return { role: 'assistant', tool_calls: normTC(m.tool_calls) };
@@ -450,10 +457,6 @@ export class BaseWebDriver implements ArenaDriver {
         return { role: 'tool', tool_call_id: m.tool_call_id || m.toolCallId || '', name: m.name || '' };
       }
       if (m.role === 'assistant') {
-        // Identity = the role itself. The client (e.g. OpenCode) normalizes or
-        // reformats assistant text it received from the raw web page, so a
-        // byte comparison always fails and forces a brand-new web session.
-        // Task identity is anchored by the surrounding user/system messages.
         return { role: 'assistant' };
       }
       return { role: m.role, content: normContent(m.content) };
@@ -462,20 +465,17 @@ export class BaseWebDriver implements ArenaDriver {
       try {
         const prev = st?.lastSentMessages || [];
         if (!prev.length) return false;
-        if (trackedMessages.length <= prev.length) {
-          console.log(
-            `[${this.options.name}] Continuation check: no (client sent ${trackedMessages.length} tracked msg(s), stored ${prev.length})`
-          );
-          return false;
-        }
-        const a = trackedMessages.slice(0, prev.length).map(msgKey);
-        const b = prev.slice(0, prev.length).map(msgKey);
+        const matchLen = Math.min(trackedMessages.length, prev.length);
+        if (matchLen === 0) return false;
+
+        const a = trackedMessages.slice(0, matchLen).map(msgKey);
+        const b = prev.slice(0, matchLen).map(msgKey);
         for (let i = 0; i < a.length; i++) {
           if (JSON.stringify(a[i]) !== JSON.stringify(b[i])) {
             const roleA = (trackedMessages[i] as any)?.role;
             const roleB = (prev[i] as any)?.role;
-            const rolesA = trackedMessages.slice(0, prev.length).map((x) => (x as any)?.role).join(',');
-            const rolesB = prev.map((x) => (x as any)?.role).join(',');
+            const rolesA = trackedMessages.slice(0, matchLen).map((x) => (x as any)?.role).join(',');
+            const rolesB = prev.slice(0, matchLen).map((x) => (x as any)?.role).join(',');
             const prevA = String(normContent((trackedMessages[i] as any)?.content)).slice(0, 200);
             const prevB = String(normContent((prev[i] as any)?.content)).slice(0, 200);
             console.log(
@@ -535,18 +535,20 @@ export class BaseWebDriver implements ArenaDriver {
       if (!resumedChat) {
         console.log(`[${this.options.name}] Persisted web chat is gone — starting a fresh session.`);
         st.lastSentMessages = [];
-        this.clearSessionState(sessionKey);
+        this.clearSessionState(effectiveSessionKey);
       }
     }
 
     let promptMessages = messages;
 
     if (canContinue || resumedChat) {
-      promptMessages = trackedMessages.slice(st.lastSentMessages.length);
+      promptMessages = trackedMessages.length > st.lastSentMessages.length
+        ? trackedMessages.slice(st.lastSentMessages.length)
+        : [trackedMessages[trackedMessages.length - 1]];
       console.log(`[${this.options.name}] Continuing existing chat session (+${promptMessages.length} message(s))...`);
     } else {
       st.lastSentMessages = [];
-      this.clearSessionState(sessionKey);
+      this.clearSessionState(effectiveSessionKey);
       console.log(`[${this.options.name}] Navigating to ${base}...`);
       await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch((e) =>
         console.log(`[${this.options.name}] goto error:`, e.message)
@@ -561,7 +563,7 @@ export class BaseWebDriver implements ArenaDriver {
     let prompt: string;
     if (inSameChat) {
       // Delta only: the web chat already holds the earlier conversation, so
-      // re-sending it (like chat-on-steroids never does) just overflows the
+      // re-sending it (like web gateway never does) just overflows the
       // composer and forces a brand-new session on every turn.
       prompt = formatMessages(compactMessagesForWeb(promptMessages, false));
       if (promptMessages.some((m) => m.role === 'tool')) prompt += toolBridgeNote;
@@ -646,7 +648,7 @@ export class BaseWebDriver implements ArenaDriver {
     let correctiveRetryUsed = false;
     try {
       result = await this.waitForResponse(page, onChunk, signal, beforeCount, beforeImages, imageSelector);
-      // Post-wait verification (Task 3): if the browser was relaunched or the
+      // Post-wait verification : if the browser was relaunched or the
       // page closed while we waited, the collected text is not trustworthy —
       // fail loudly instead of returning a ghost reply.
       if (!this.browserOwner.verify(page, this.pageEpoch)) {
@@ -740,14 +742,15 @@ export class BaseWebDriver implements ArenaDriver {
     if (this.options.config.privacyMode) {
       await this.cleanupPrivacySession(page).catch(() => {});
       st.lastSentMessages = [];
-      this.clearSessionState(sessionKey);
+      this.clearSessionState(effectiveSessionKey);
     }
 
+    providerSessionRouter.recordTurn(providerId, page.url(), text.length);
     return text;
     } finally {
-      // Task 6: always give the page back to the scheduler (LRU bookkeeping;
+      // always give the page back to the scheduler (LRU bookkeeping;
       // the page stays bound to this session unless someone else needs it).
-      await this.tabScheduler?.release(sessionKey).catch(() => {});
+      await this.tabScheduler?.release(effectiveSessionKey).catch(() => {});
     }
   }
 
@@ -1149,7 +1152,7 @@ export class BaseWebDriver implements ArenaDriver {
     return this.page;
   }
 
-  /** Lazily launches the persistent context, claiming profile ownership (Task 3). */
+  /** Lazily launches the persistent context, claiming profile ownership . */
   protected async ensureContext(): Promise<BrowserContext> {
     if (this.context) {
       try {
@@ -1177,7 +1180,7 @@ export class BaseWebDriver implements ArenaDriver {
     } catch {
       ctx = await chromium.launchPersistentContext(this.options.config.userDataDir, baseOptions);
     }
-    // Browser ownership (Task 3): a new context is a new browser incarnation
+    // Browser ownership : a new context is a new browser incarnation
     // — bump the epoch and claim exclusive ownership of the profile. A live
     // claim from ANOTHER gateway process refuses the request safely (503
     // policy) instead of letting two processes drive the same profile.
@@ -1186,7 +1189,7 @@ export class BaseWebDriver implements ArenaDriver {
     const claim = await this.ownershipLedger.claimProfile(profileDir, this.browserOwner.id, this.browserOwner.epoch);
     if (claim.status === 'busy') {
       try { await ctx.close(); } catch {}
-      // Task 11: structured busy error (same external 503 semantics; the
+      // structured busy error (same external 503 semantics; the
       // ProfileOwnerRouter can now FORWARD to the owner instead of failing).
       throw new ProfileBusyError(
         `503 profile in use by another gateway process: profile "${profileDir}" is owned by ` +
@@ -1204,7 +1207,7 @@ export class BaseWebDriver implements ArenaDriver {
     }
     this.claimedProfile = true;
     this.pageEpoch = this.browserOwner.epoch;
-    // Task 11: advertise the loopback IPC channel for this profile (routing
+    // advertise the loopback IPC channel for this profile (routing
     // requests from other gateway processes to THIS owner process). Startup
     // failure degrades to the legacy safe-busy behavior — never fatal.
     try {
@@ -1222,10 +1225,10 @@ export class BaseWebDriver implements ArenaDriver {
       console.log(`[${this.options.name}] Profile ownership taken over from dead/stale owner pid=${claim.previousOwner.pid}`);
     }
     this.context = ctx;
-    // Task 6: per-session tab scheduling on top of the existing pool. The
+    // per-session tab scheduling on top of the existing pool. The
     // scheduler keeps session→page bindings and LRU-evicts idle sessions
     // (saving their conversation URL first) when the page cap is reached.
-    const maxTabs = (this.options.config as any).maxTabs || 3;
+    const maxTabs = (this.options.config as any).maxTabs || 1;
     this.tabScheduler = new TabScheduler(new TabWorkerPool(ctx, { maxTabs }), {
       onEvict: async (evictedKey, url) => {
         // Persist the conversation URL BEFORE the page is freed so the

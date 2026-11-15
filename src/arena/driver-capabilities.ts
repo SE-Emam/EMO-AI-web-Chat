@@ -1,5 +1,5 @@
 /**
- * Task 13 — declared driver capabilities (owner locked decisions).
+ * declared driver capabilities .
  *
  * The session pattern is an EXPLICIT declared value, never a bare boolean
  * and never something a driver may silently fake:
@@ -43,7 +43,7 @@ export interface DriverCapabilities {
 /**
  * Shared serialization lane for the standalone single-page drivers
  * (zai/qwen/gemini/claude web). EXACTLY the semantics their promise-queue
- * pattern had before Task 13 — one browser page cannot serve concurrent
+ * pattern had before one browser page cannot serve concurrent
  * chats — with the sessionKey made explicit instead of silently dropped.
  * Same-session requests serialize; DIFFERENT sessions serialize too, because
  * they share the one page (declared in capabilities.notes, not hidden).

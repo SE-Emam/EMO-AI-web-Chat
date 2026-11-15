@@ -25,14 +25,14 @@ export interface DriverRoute {
 const ABORT_NON_RETRYABLE = ['Request was aborted'];
 
 export interface RoutingResilienceOptions {
-  /** Task 14 — per-(route,profileDir) circuit breakers (refuse NEW requests on OPEN routes). */
+  /** per-(route,profileDir) circuit breakers (refuse NEW requests on OPEN routes). */
   breakers?: BreakerRegistry;
-  /** Task 14 — process-local last-failure/last-success memory for /health. */
+  /** process-local last-failure/last-success memory for /health. */
   registry?: ResilienceRegistry;
 }
 
 /**
- * Task 14 — policy codes that are NEVER failed over: no silent provider or
+ * policy codes that are NEVER failed over: no silent provider or
  * account switching, and usage limits are never bypassed by routing.
  * A failure after a possible send (sent=true) is handled by the same rule
  * through its non-retryable classification (failover would duplicate send).
@@ -90,7 +90,7 @@ export class RoutingDriver implements ArenaDriver {
 
     let lastError: unknown;
     for (const route of candidates) {
-      // Task 14 — breaker gate: an OPEN circuit refuses NEW requests only;
+      // breaker gate: an OPEN circuit refuses NEW requests only;
       // in-flight requests are never touched (no cancellation anywhere).
       const profileDir = route.driver.getProfileDir?.() ?? route.name;
       const breaker = this.breakers?.forProvider(route.name, profileDir);
@@ -113,7 +113,7 @@ export class RoutingDriver implements ArenaDriver {
         // OwnerRoutingDriver), otherwise a second browser could start.
         if (err instanceof ProfileBusyError) throw err;
 
-        // Task 14 — classification (failure info survives the route).
+        // classification (failure info survives the route).
         const failure: ProviderFailure =
           err instanceof ProviderFailureError ? err.failure : classifyFailure(err, { phase: 'pre-send', sent: false });
         this.registry?.recordFailure(route.name, profileDir, failure.code, {
@@ -173,7 +173,7 @@ export class RoutingDriver implements ArenaDriver {
   }
 
   /**
-   * Task 14 — /health section (LOCAL state only). Never contacts a provider:
+   * /health section (LOCAL state only). Never contacts a provider:
    * provider state is always 'not_checked' unless something else actually
    * verified it. Profile directories are redacted to their basename.
    */

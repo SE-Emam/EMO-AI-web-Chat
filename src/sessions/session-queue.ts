@@ -1,12 +1,11 @@
 /**
- * Per-session request queues (chat-on-steroids principle: one chat, one
- * execution lane). Requests for the SAME sessionKey run strictly one after
+ * Per-session request queues . Requests for the SAME sessionKey run strictly one after
  * the other; requests for DIFFERENT sessionKeys run in parallel. A failing
  * request never poisons its session's lane.
  */
 export class SessionQueue {
   private readonly tails = new Map<string, Promise<unknown>>();
-  /** Task 14 — process-global count of requests WAITING behind a busy lane (for /health). */
+  /** process-global count of requests WAITING behind a busy lane (for /health). */
   private static globalWaiting = 0;
 
   /** Runs fn serialized per key; keys are independent lanes. */
@@ -47,7 +46,7 @@ export class SessionQueue {
     return this.tails.has(key);
   }
 
-  /** Task 14 — process-global waiting count across ALL lanes (for /health). */
+  /** process-global waiting count across ALL lanes (for /health). */
   static globalWaitingCount(): number {
     return SessionQueue.globalWaiting;
   }

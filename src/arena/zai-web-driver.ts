@@ -4,6 +4,7 @@ import { cleanupStaleProfileLocks } from '../browser/manager.js';
 import { formatMessages } from './models.js';
 import { ZaiDriver } from './zai-driver.js';
 import { DEFAULT_ZAI_WEB_BASE_URL } from '../config.js';
+import { providerSessionRouter } from './provider-session-router.js';
 import { SerializedSessionSendQueue, STANDALONE_SERIALIZED_NOTES, type DriverCapabilities } from './driver-capabilities.js';
 
 /** Assistant-message containers used by the chat.z.ai (Svelte) UI. */
@@ -15,7 +16,7 @@ const CAPTCHA_MARKERS = ['drag the slider', 'security verification'];
  * Arena-driver-compatible client for the z.ai **web chat** (chat.z.ai).
  *
  * - Drives a real, persistent Chrome profile (separate from the Arena profile) that
- *   holds a signed-in session — see scripts/login-zai-web.sh.
+ *   holds a signed-in session — login via gateway UI or npm run login.
  * - Runs HEADED by default so the human can solve the Aliyun slider captcha by hand
  *   in the visible window when it appears (security design: captcha = human task).
  * - Exposes glm-5.3-flash free of charge (no API key), streaming deltas through onChunk.
@@ -25,7 +26,7 @@ export class ZaiWebDriver implements ArenaDriver {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   /**
-   * Task 13 — declared serialized session lane. A single browser page cannot
+   * declared serialized session lane. A single browser page cannot
    * serve concurrent chats: same-session AND cross-session requests
    * serialize (the sessionKey is accepted and logged, never silently
    * dropped — declared in getCapabilities()).
@@ -63,7 +64,7 @@ export class ZaiWebDriver implements ArenaDriver {
     };
   }
 
-  /** Task 14 — breaker key half: the durable profile this driver runs against. */
+  /** breaker key half: the durable profile this driver runs against. */
   getProfileDir(): string {
     return this.config.userDataDir;
   }
@@ -78,8 +79,14 @@ export class ZaiWebDriver implements ArenaDriver {
     if (signal?.aborted) throw new Error('Request was aborted');
     const page = await this.ensurePage(signal);
 
-    console.log(`[ZaiWeb] Preparing chat.z.ai for a new prompt...`);
-    await this.prepareNewChat(page, signal);
+    const shouldRotate = providerSessionRouter.shouldRotate('zai-web');
+    if (shouldRotate) {
+      providerSessionRouter.rotateSession('zai-web', 'turn_limit_reached');
+      console.log(`[ZaiWeb] Preparing chat.z.ai for a fresh session...`);
+      await this.prepareNewChat(page, signal);
+    } else {
+      console.log(`[ZaiWeb] Continuing active session in existing chat...`);
+    }
     await this.selectModel(page, model).catch((e: Error) =>
       console.log(`[ZaiWeb] Model selection skipped (${model}): ${e.message}`)
     );
@@ -92,7 +99,7 @@ export class ZaiWebDriver implements ArenaDriver {
       .catch(() => false);
     if (!inputReady) {
       throw new Error(
-        'z.ai web chat did not show the prompt input. Session may have expired — run scripts/login-zai-web.sh once (headfully) to refresh it.'
+        'z.ai web chat did not show the prompt input. Session may have expired — login via gateway UI (http://127.0.0.1:8989) or npm run login to refresh it.'
       );
     }
     await input.click().catch(() => {});
@@ -166,6 +173,7 @@ export class ZaiWebDriver implements ArenaDriver {
       if (sawAnyText && !generating && lastText.length > 0) {
         stablePolls++;
         if (stablePolls >= 3) {
+          providerSessionRouter.recordTurn('zai-web', page.url(), lastText.length);
           return lastText;
         }
       } else {

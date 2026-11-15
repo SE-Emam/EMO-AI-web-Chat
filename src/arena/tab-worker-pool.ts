@@ -30,7 +30,7 @@ export class TabWorkerPool {
 
   constructor(context: BrowserContext, options: TabPoolOptions = {}) {
     this.context = context;
-    this.maxTabs = Math.max(1, options.maxTabs || 3);
+    this.maxTabs = Math.max(1, options.maxTabs || 1);
     this.initialUrl = options.initialUrl;
     this.autoCompactThresholdTurns = options.autoCompactThresholdTurns || 15;
   }

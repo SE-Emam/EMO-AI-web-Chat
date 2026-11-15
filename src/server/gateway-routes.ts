@@ -8,6 +8,7 @@ import type { ProviderManager } from '../gateway/provider-manager.js';
 import type { UsageTracker } from '../gateway/usage-tracker.js';
 import { isValidApiKey } from '../gateway/security.js';
 import { registerMcpServer } from './mcp-server.js';
+import { mcpTunnelServer } from './mcp-tunnel-server.js';
 import { configureMcpServers, mcpTargets } from '../gateway/mcp-auto-config.js';
 
 function isProviderId(v: string): v is WebProviderId {
@@ -1784,6 +1785,89 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
     cfg.ui.mcp = { ...(cfg.ui.mcp || {}), workspaceRoots: roots };
     await opts.manager.saveConfig();
     return { ok: true, roots };
+  });
+
+  /**
+   * Tunnel configuration for MCP:
+   * Supports OpenAI Platform Organization Tunnels (https://platform.openai.com/settings/organization/tunnels)
+   * or a custom public HTTPS tunnel endpoint.
+   */
+  app.get('/api/gateway/mcp/tunnel', async () => {
+    const cfg = opts.getGatewayConfig();
+    const port = cfg.gateway.port || 8989;
+    const state = mcpTunnelServer.getState();
+    const openaiTunnelUrl = cfg.ui?.mcp?.openaiTunnelUrl || '';
+    const tunnelId = cfg.ui?.mcp?.tunnelId || '';
+    const tunnelToken = cfg.ui?.mcp?.tunnelToken || '';
+    const tunnelAutoStart = Boolean(cfg.ui?.mcp?.tunnelAutoStart);
+    const localMcpUrl = `http://127.0.0.1:${port}/mcp`;
+    const effectivePublicMcp = state.publicMcpUrl || (openaiTunnelUrl ? (openaiTunnelUrl.endsWith('/mcp') ? openaiTunnelUrl : `${openaiTunnelUrl.replace(/\/$/, '')}/mcp`) : null);
+
+    return {
+      active: state.status === 'running' || Boolean(effectivePublicMcp),
+      status: state.status,
+      provider: state.provider,
+      openaiTunnelUrl: openaiTunnelUrl || null,
+      tunnelId: tunnelId || null,
+      tunnelToken: tunnelToken ? '***' : null,
+      tunnelAutoStart,
+      localMcpUrl,
+      publicMcpUrl: effectivePublicMcp,
+      startedAt: state.startedAt,
+      error: state.error,
+      helpUrl: 'https://platform.openai.com/settings/organization/tunnels',
+    };
+  });
+
+  app.post('/api/gateway/mcp/tunnel', async (req, reply) => {
+    const body = (req.body || {}) as { openaiTunnelUrl?: unknown; tunnelToken?: unknown; tunnelId?: unknown; tunnelAutoStart?: unknown };
+    const cfg = opts.getGatewayConfig();
+    cfg.ui = cfg.ui || ({} as any);
+    const existingMcp = cfg.ui.mcp || { workspaceRoots: [] };
+    const rawUrl = typeof body.openaiTunnelUrl === 'string' ? body.openaiTunnelUrl.trim() : undefined;
+    const rawToken = typeof body.tunnelToken === 'string' ? body.tunnelToken.trim() : undefined;
+    const rawTunnelId = typeof body.tunnelId === 'string' ? body.tunnelId.trim() : undefined;
+    const rawAutoStart = typeof body.tunnelAutoStart === 'boolean' ? body.tunnelAutoStart : undefined;
+
+    cfg.ui.mcp = {
+      ...existingMcp,
+      openaiTunnelUrl: rawUrl !== undefined ? rawUrl : existingMcp.openaiTunnelUrl,
+      tunnelToken: rawToken !== undefined ? rawToken : existingMcp.tunnelToken,
+      tunnelId: rawTunnelId !== undefined ? rawTunnelId : existingMcp.tunnelId,
+      tunnelAutoStart: rawAutoStart !== undefined ? rawAutoStart : existingMcp.tunnelAutoStart,
+    };
+    await opts.manager.saveConfig();
+    const port = cfg.gateway.port || 8989;
+    const resolvedUrl = cfg.ui.mcp.openaiTunnelUrl;
+    const publicMcpUrl = resolvedUrl ? (resolvedUrl.endsWith('/mcp') ? resolvedUrl : `${resolvedUrl.replace(/\/$/, '')}/mcp`) : null;
+    return {
+      ok: true,
+      openaiTunnelUrl: cfg.ui.mcp.openaiTunnelUrl || null,
+      publicMcpUrl,
+      localMcpUrl: `http://127.0.0.1:${port}/mcp`,
+    };
+  });
+
+  app.post('/api/gateway/mcp/tunnel/start', async (req, reply) => {
+    const body = (req.body || {}) as { provider?: string; customUrl?: string; tunnelId?: string; token?: string };
+    const cfg = opts.getGatewayConfig();
+    const port = cfg.gateway.port || 8989;
+    const customUrl = body.customUrl || cfg.ui?.mcp?.openaiTunnelUrl;
+    const tunnelId = body.tunnelId || cfg.ui?.mcp?.tunnelId;
+    const token = body.token || cfg.ui?.mcp?.tunnelToken;
+    const provider = (body.provider as any) || (tunnelId || customUrl ? 'openai' : 'cloudflared');
+    const gatewayApiKey = cfg.gateway.apiKey;
+    try {
+      const state = await mcpTunnelServer.start({ provider, customUrl, tunnelId, port, token, gatewayApiKey });
+      return { ok: true, state };
+    } catch (e) {
+      return reply.status(500).send({ ok: false, error: (e as Error).message });
+    }
+  });
+
+  app.post('/api/gateway/mcp/tunnel/stop', async () => {
+    const state = await mcpTunnelServer.stop();
+    return { ok: true, state };
   });
 
   /** The progress of the running (or last) bulk job. */

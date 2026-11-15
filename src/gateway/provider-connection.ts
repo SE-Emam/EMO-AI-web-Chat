@@ -13,7 +13,7 @@
  *    deletes cookies and never sends a chat message → no credit is consumed.
  *  - The probe never returns credentials, cookies or tokens. Literal secrets
  *    are masked out of every message before it leaves this module.
- *  - Failures are classified with the CENTRAL Task 14 classifier
+ *  - Failures are classified with the central classifier
  *    (`src/arena/provider-failures.ts`) — no parallel error taxonomy.
  *  - A status is only 'connected' when every checked signal is actually true.
  */
@@ -74,7 +74,7 @@ export interface ProviderConnectionReport {
   detailKey?: string;
   /** Parameters for the i18n key. */
   detailParams?: Record<string, string | number>;
-  /** Central Task 14 failure code when the probe failed. */
+  /** Central failure code when the probe failed. */
   failureCode?: ProviderFailureCode;
   /** HTTP status of the probe, when a response was received. */
   httpStatus?: number;

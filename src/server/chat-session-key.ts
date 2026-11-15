@@ -1,6 +1,6 @@
 /**
  * Client-side session identity for /v1/chat/completions (extracted verbatim
- * from app.ts in Task 4 — behavior unchanged).
+ * from app.ts in behavior unchanged).
  *
  * Priority: explicit client header `X-Chat-Session-ID`, then body
  * `metadata.session_id`, then a stable fingerprint of the task itself
@@ -12,6 +12,7 @@
  * even when their messages are byte-identical.
  */
 import { createHash } from 'node:crypto';
+import { extractMessageText } from '../arena/models.js';
 
 export function chatSessionKey(request: any, body: any, messages: any[]): string {
   const header = String(request?.headers?.['x-chat-session-id'] || '').trim();
@@ -21,6 +22,8 @@ export function chatSessionKey(request: any, body: any, messages: any[]): string
   if (meta) return meta;
   const sys = messages.find((m) => m?.role === 'system');
   const user = messages.find((m) => m?.role === 'user');
-  const fingerprint = `${String(sys?.content ?? '').slice(0, 500)}\u0000${String(user?.content ?? '').slice(0, 500)}`;
+  const sysText = extractMessageText(sys?.content);
+  const userText = extractMessageText(user?.content);
+  const fingerprint = `${sysText.slice(0, 500)}\u0000${userText.slice(0, 500)}`;
   return 'task-' + createHash('sha1').update(fingerprint).digest('hex').slice(0, 16);
 }

@@ -2,8 +2,7 @@
  * Durable JSON storage with atomic replacement.
  *
  * The rename step is atomic on the same filesystem, so a crash mid-write can
- * never leave a half-written target file (chat-on-steroids durable store
- * principle). Cross-process *mutual exclusion* of read-modify-write cycles is
+ * never leave a half-written target file . Cross-process *mutual exclusion* of read-modify-write cycles is
  * NOT provided here — use ProcessLock around the whole cycle.
  */
 import fs from 'node:fs';

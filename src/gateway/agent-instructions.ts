@@ -1,7 +1,7 @@
 /**
  * The environment facts the web model needs.
  *
- * Rule taken from "chat-on-steroids" and applied here: every line states
+ * Rule taken from "web gateway" and applied here: every line states
  * what IS, never how the model should judge it. A line that tells the model
  * how to behave ("never refuse", "do not claim") is not a fact — and a web
  * model that is told how to judge answers with a refusal instead of a call.
@@ -42,8 +42,7 @@ export function buildEnvironmentBlock(tools: AnnouncedTool[], roots: string[]): 
  * The block for the turn that carries a tool result.
  *
  * The result is the client's own output — it is labelled as such, because a
- * result that is not labelled is read as untrusted text (chat-on-steroids,
- * #1231). The call that produced it and its output are repeated next to
+ * result that is not labelled is read as untrusted text . The call that produced it and its output are repeated next to
  * the next call, because a model that has to stitch the story together
  * from four separate places narrates the failure instead of acting.
  */

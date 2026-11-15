@@ -1,5 +1,5 @@
 /**
- * Task 11 — Profile Owner Router (owner mandatory mods #3/#4).
+ * Profile Owner Router (owner mandatory mods #3/#4).
  *
  * Intercepts ProfileBusyError and forwards the request over the loopback IPC
  * channel to the process that actually owns the browser profile:
@@ -13,7 +13,7 @@
  *  - owner pid dead;
  *  - shared-state proof fails: the receiver and the owner must use the SAME
  *    normalized broker store + state root, otherwise Idempotency claims
- *    would be false (owner mandatory mod #4).
+ *    would be false .
  *
  * Forward failure handling is decided from the DURABLE broker store via
  * settleForwardFailure — an IPC timeout alone NEVER allows re-execution
@@ -46,7 +46,7 @@ import type {
 import type { ArenaDriver } from '../types.js';
 
 /**
- * Task 11 — dynamic owner-routing wrapper (owner mandatory mod #3).
+ * dynamic owner-routing wrapper .
  *
  * Wraps the driver resolution at the ACTUAL provider/profile selection point.
  * The resolver is called PER REQUEST (never a captured static driver), so it
@@ -247,7 +247,7 @@ export class ProfileOwnerRouter {
 }
 
 /**
- * OWNER-SIDE execution hooks (Task 11): wires the loopback IPC server to the
+ * OWNER-SIDE execution hooks : wires the loopback IPC server to the
  * local driver with the atomic durable reservation enforced:
  *
  *  1. validate: owner identity + epoch gate (stale commands refused);
@@ -344,7 +344,7 @@ export function createOwnerExecutionHooks(opts: {
 }
 
 /**
- * OWNER-SIDE lifecycle (Task 11): exactly ONE loopback IPC server per
+ * OWNER-SIDE lifecycle : exactly ONE loopback IPC server per
  * (process, profile), started only AFTER the profile claim succeeded and
  * registered on the ledger entry only once it is actually listening.
  * Re-claim with a new epoch (browser re-incarnation) restarts the server.

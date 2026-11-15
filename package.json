@@ -13,9 +13,7 @@
   },
   "scripts": {
     "build": "tsc && chmod +x dist/cli.js dist/emo-ai.js 2>/dev/null || (tsc && chmod +x dist/cli.js)",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
     "start": "tsx src/cli.ts serve",
     "login": "tsx src/cli.ts login",
     "emo": "tsx src/emo-ai.ts",
@@ -42,7 +40,6 @@
   "devDependencies": {
     "@types/node": "^22.13.4",
     "tsx": "^4.19.3",
-    "typescript": "^5.7.3",
-    "vitest": "^3.0.5"
+    "typescript": "^5.7.3"
   }
 }

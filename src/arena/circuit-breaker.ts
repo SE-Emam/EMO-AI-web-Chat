@@ -1,5 +1,5 @@
 /**
- * Task 14 — circuit breaker keyed by (providerId, profileDir).
+ * circuit breaker keyed by (providerId, profileDir).
  *
  * Owner locked rules:
  *  - CLOSED admits normally; OPEN refuses NEW requests only — in-flight

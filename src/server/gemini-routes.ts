@@ -37,7 +37,7 @@ export interface GeminiRoutesOptions {
   getValidApiKeys?: () => string[];
   getScopedGroup?: (key: string) => { name: string } | undefined;
   /**
-   * Task 12 — the ONE shared RequestBroker instance (same store + ProcessLock
+   * the ONE shared RequestBroker instance (same store + ProcessLock
    * as the OpenAI/Anthropic paths). When present, opt-in idempotency via
    * X-Request-Id applies to /v1beta generateContent routes; absent →
    * behavior unchanged (no forced idempotency).
@@ -113,7 +113,7 @@ function promptChars(messages: ChatMessage[]): number {
 }
 
 /**
- * Task 12 — serves a stored broker result as a NATIVE Gemini response.
+ * serves a stored broker result as a NATIVE Gemini response.
  * The stored `nativeReplay` (the exact object the first execution returned)
  * is replayed as-is for JSON; for SSE the native chunk sequence is rebuilt
  * from the stored text with the SAME formatters (candidates/content/parts
@@ -445,7 +445,7 @@ export function registerGeminiRoutes(
     });
     let completionChars = 0;
 
-    // ---- Task 12: unified claim-once broker (opt-in via X-Request-Id) ----
+    // ---- unified claim-once broker (opt-in via X-Request-Id) ----
     // Same lifecycle as the Anthropic/OpenAI paths over the SAME broker
     // instance. The fingerprint covers the EFFECTIVE body (post model
     // coercion). countTokens/GET routes are not executions → never claimed.
@@ -676,7 +676,7 @@ export function registerGeminiRoutes(
               id,
               model,
               content: streamFull,
-              // Native replay payload for this protocol (Task 12 decision):
+              // Native replay payload for this protocol:
               // SSE replays are rebuilt from {id, model, text} via the native
               // formatters — chunk slicing of the original stream is not kept.
               nativeReplay: { id, model, text: streamFull },

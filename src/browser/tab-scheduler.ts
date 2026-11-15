@@ -1,6 +1,6 @@
 /**
  * TabScheduler — session-aware scheduling on top of the existing TabWorkerPool
- * (Task 6, plan v2). The Pool keeps ownership of the page cap, waiters and
+ * . The Pool keeps ownership of the page cap, waiters and
  * tab specs (proven by its existing tests) — we do NOT build a second pool.
  * What the Scheduler adds is what the Pool lacks:
  *
@@ -15,7 +15,7 @@
  *    URL on its next request (the driver resumes from sessionChatUrl).
  *
  * Independent web drivers (zai/qwen/gemini/claude in their own files) keep the
- * legacy single-page queue — documented limitation, plan v2 Task 6.
+ * legacy single-page queue — single-page serial execution.
  */
 import type { Page } from 'playwright';
 import { TabWorkerPool, type PooledWorkerTab } from '../arena/tab-worker-pool.js';

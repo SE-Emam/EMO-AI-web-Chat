@@ -1,5 +1,5 @@
 /**
- * Task 14 — centralized provider failure classification + secret-free
+ * centralized provider failure classification + secret-free
  * diagnostics + process-local resilience memory.
  *
  * Owner locked rules (directive §2/§3/§4/§7):

@@ -1,5 +1,5 @@
 /**
- * Task 11 — structured profile-ownership conflict (owner mandatory mod #3).
+ * structured profile-ownership conflict .
  *
  * Replaces the old text-only 503 error from ensureContext. The message text
  * keeps the legacy "503 profile in use by another gateway process" prefix so

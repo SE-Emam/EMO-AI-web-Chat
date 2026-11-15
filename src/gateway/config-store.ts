@@ -329,6 +329,12 @@ function mergeConfig(defaults: GatewayConfigFile, raw: unknown): GatewayConfigFi
           // Desktop) applies until the user chooses otherwise.
           return stored.length ? stored : (defaults.ui.mcp?.workspaceRoots ?? defaultMcpWorkspaceRoots());
         })(),
+        openaiTunnelUrl: typeof (rawUi.mcp as any)?.openaiTunnelUrl === 'string'
+          ? (rawUi.mcp as any).openaiTunnelUrl.trim()
+          : undefined,
+        tunnelToken: typeof (rawUi.mcp as any)?.tunnelToken === 'string'
+          ? (rawUi.mcp as any).tunnelToken.trim()
+          : undefined,
       },
     },
     providers,

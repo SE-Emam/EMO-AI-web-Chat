@@ -3,6 +3,7 @@ import type { ArenaDriver, ChatMessage, GeminiWebConfig } from '../types.js';
 import { cleanupStaleProfileLocks } from '../browser/manager.js';
 import { formatMessages } from './models.js';
 import { DEFAULT_GEMINI_WEB_BASE_URL } from '../config.js';
+import { providerSessionRouter } from './provider-session-router.js';
 
 const EDITOR = '.ql-editor[contenteditable="true"][aria-label*="prompt"], .ql-editor[contenteditable="true"], rich-textarea .ql-editor[contenteditable="true"]';
 const SEND = 'button[aria-label="Send message"], button[aria-label*="Send message"], button[mattooltip="Send message"]';
@@ -34,7 +35,7 @@ export class GeminiWebDriver implements ArenaDriver {
   private readonly config: GeminiWebConfig;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
-  /** Task 13 — declared serialized session lane (single shared page → global serialization). */
+  /** declared serialized session lane (single shared page → global serialization). */
   private readonly sendQueue = new SerializedSessionSendQueue();
 
   constructor(config: GeminiWebConfig) {
@@ -67,7 +68,7 @@ export class GeminiWebDriver implements ArenaDriver {
     };
   }
 
-  /** Task 14 — breaker key half: the durable profile this driver runs against. */
+  /** breaker key half: the durable profile this driver runs against. */
   getProfileDir(): string {
     return this.config.userDataDir;
   }
@@ -83,28 +84,40 @@ export class GeminiWebDriver implements ArenaDriver {
     const page = await this.ensurePage();
     const base = (this.config.baseUrl || DEFAULT_GEMINI_WEB_BASE_URL).replace(/\/$/, '');
 
-    console.log('[GeminiWeb] Navigating to gemini.google.com/app...');
-    await page.goto(`${base}/app`, { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch((e) =>
-      console.log('[GeminiWeb] goto error:', e.message)
-    );
-    await page.waitForTimeout(2500);
-    await this.assertAuthenticated(page);
-    await this.startNewChatIfPossible(page).catch(() => {});
-    await page.waitForTimeout(800);
-    await this.selectModelIfRequested(page, model, signal);
+    const shouldRotate = providerSessionRouter.shouldRotate('gemini-web');
+    const currentUrl = page.url() || '';
+    const isNew = !currentUrl || currentUrl === 'about:blank' || !currentUrl.includes('gemini.google.com');
+    if (shouldRotate || isNew) {
+      if (shouldRotate) {
+        providerSessionRouter.rotateSession('gemini-web', 'turn_limit_reached');
+      }
+      console.log('[GeminiWeb] Navigating to gemini.google.com/app (fresh session)...');
+      await page.goto(`${base}/app`, { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch((e) =>
+        console.log('[GeminiWeb] goto error:', e.message)
+      );
+      await page.waitForTimeout(2500);
+      await this.assertAuthenticated(page);
+      await this.startNewChatIfPossible(page).catch(() => {});
+      await page.waitForTimeout(800);
+      await this.selectModelIfRequested(page, model, signal);
+    } else {
+      console.log(`[GeminiWeb] Continuing active session in existing chat (${currentUrl})...`);
+    }
 
     const beforeCount = await page.locator(MODEL_RESPONSE).count().catch(() => 0);
     const prompt = formatMessages(messages);
     await this.fillComposer(page, prompt, signal);
     await this.clickSend(page, signal);
-    return await this.waitForResponse(page, beforeCount, onChunk, signal);
+    const result = await this.waitForResponse(page, beforeCount, onChunk, signal);
+    providerSessionRouter.recordTurn('gemini-web', page.url(), result.length);
+    return result;
   }
 
   private async assertAuthenticated(page: Page): Promise<void> {
     const url = page.url();
     if (/accounts\.google\.com|\/signin|ServiceLogin/i.test(url)) {
       throw new Error(
-        'Gemini session is not authenticated (redirected to Google sign-in). Run: node scripts/login-gemini-web.mjs (complete login/2FA, close window), then retry. Profile: ' +
+        'Gemini session is not authenticated (redirected to Google sign-in). Run login from the management UI (http://127.0.0.1:8989) or run "npm run login", then retry. Profile: ' +
           this.config.userDataDir
       );
     }

@@ -3111,6 +3111,36 @@ img.brand-logo{
                 <div id="mcpTargetsList" style="font-size:11.5px;color:var(--text-muted);margin-top:6px;line-height:1.7"></div>
               </div>
               <div style="font-size:11.5px;color:var(--text-muted)" data-i18n="mcpHintAgent">اختر الوكيل والنموذج من الأعلى ليتم تضمينهما في الإعداد.</div>
+              <div style="margin-top:14px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--card-subtle);display:flex;flex-direction:column;gap:10px">
+                <div style="display:flex;align-items:center;justify-content:space-between">
+                  <div style="font-size:13px;font-weight:600">نفق MCP لـ ChatGPT والوصول الخارجي (OpenAI Organization Tunnel)</div>
+                  <span id="mcpTunnelStatusBadge" class="badge badge-warn">متوقف</span>
+                </div>
+                <p style="font-size:11.5px;color:var(--text-muted);margin:0">
+                  ربط أدوات فحص ملفات الجهاز بـ ChatGPT ومنتجات OpenAI رسمياً عبر
+                  <a href="https://platform.openai.com/settings/organization/tunnels" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">OpenAI Organization Tunnels</a>
+                  (اتصال صادر مشفر دون فتح أي منافذ).
+                </p>
+                <div class="connect-grid-2">
+                  <div>
+                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">معرّف النفق (Tunnel ID من OpenAI)</label>
+                    <input type="text" id="inpMcpTunnelId" class="form-input" style="direction:ltr;font-family:var(--font-mono)" placeholder="tunnel_0123456789abcdef..." />
+                  </div>
+                  <div>
+                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">مفتاح الوصول (API Key / Token)</label>
+                    <input type="password" id="inpMcpTunnelToken" class="form-input" style="direction:ltr;font-family:var(--font-mono)" placeholder="sk-..." />
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted)">
+                  <input type="checkbox" id="chkMcpTunnelAutoStart" />
+                  <label for="chkMcpTunnelAutoStart">تشغيل النفق تلقائياً عند بدء تشغيل البوابة</label>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                  <button type="button" class="btn-primary btn-sm" onclick="startMcpTunnel()">بدء تشغيل النفق</button>
+                  <button type="button" class="btn-sm" onclick="stopMcpTunnel()">إيقاف النفق</button>
+                  <span id="mcpTunnelHint" style="font-size:11px;color:var(--text-dim);margin-inline-start:8px"></span>
+                </div>
+              </div>
             </div>
             <div>
               <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
@@ -8793,6 +8823,7 @@ function resolveMcpTarget(target, ag){
 
 function updateMcpConfigDisplay(){
   void loadMcpWorkspace();
+  void loadMcpTunnel();
   void loadMcpTargets();
   const pre = document.getElementById('dtMcpConfigCode');
   if(!pre) return;
@@ -8959,6 +8990,62 @@ async function autoConfigureMcpServers(){
     await loadMcpTargets();
   }catch(e){
     if(hint) hint.textContent = providerErrorMessage(e);
+    showToast(providerErrorMessage(e), 'error');
+  }
+}
+
+
+async function loadMcpTunnel(){
+  try{
+    const res = await api('/api/gateway/mcp/tunnel');
+    const inpId = document.getElementById('inpMcpTunnelId');
+    const chkAuto = document.getElementById('chkMcpTunnelAutoStart');
+    const badge = document.getElementById('mcpTunnelStatusBadge');
+    const hint = document.getElementById('mcpTunnelHint');
+
+    if(inpId && res.tunnelId && !inpId.value) inpId.value = res.tunnelId;
+    if(chkAuto) chkAuto.checked = Boolean(res.tunnelAutoStart);
+    if(badge){
+      const active = res.status === 'running' || res.active;
+      badge.className = 'badge ' + (active ? 'badge-success' : 'badge-warn');
+      badge.textContent = active ? 'متصل (Active)' : (res.status === 'starting' ? 'قيد البدء' : 'متوقف (Stopped)');
+    }
+    if(hint){
+      if(res.publicMcpUrl){
+        hint.innerHTML = 'نقطة الوصول: <code style="direction:ltr;font-family:var(--font-mono)">' + res.publicMcpUrl + '</code>';
+      } else {
+        hint.textContent = 'النفق يربط خادم MCP المحلي بـ ChatGPT ومنتجات OpenAI السحابية دون فتح منافذ.';
+      }
+    }
+  }catch(e){}
+}
+
+async function startMcpTunnel(){
+  const tunnelId = (document.getElementById('inpMcpTunnelId')?.value || '').trim();
+  const token = (document.getElementById('inpMcpTunnelToken')?.value || '').trim();
+  const autoStart = Boolean(document.getElementById('chkMcpTunnelAutoStart')?.checked);
+  try{
+    await api('/api/gateway/mcp/tunnel', {
+      method: 'POST',
+      body: JSON.stringify({ tunnelId, tunnelToken: token || undefined, tunnelAutoStart: autoStart }),
+    });
+    const res = await api('/api/gateway/mcp/tunnel/start', {
+      method: 'POST',
+      body: JSON.stringify({ tunnelId, token: token || undefined }),
+    });
+    showToast('تم بدء تشغيل النفق بنجاح');
+    await loadMcpTunnel();
+  }catch(e){
+    showToast(providerErrorMessage(e), 'error');
+  }
+}
+
+async function stopMcpTunnel(){
+  try{
+    await api('/api/gateway/mcp/tunnel/stop', { method: 'POST', body: '{}' });
+    showToast('تم إيقاف النفق');
+    await loadMcpTunnel();
+  }catch(e){
     showToast(providerErrorMessage(e), 'error');
   }
 }

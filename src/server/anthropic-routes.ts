@@ -40,7 +40,7 @@ export interface AnthropicRoutesOptions {
   getValidApiKeys?: () => string[];
   getScopedGroup?: (key: string) => { name: string } | undefined;
   /**
-   * Task 12 — the ONE shared RequestBroker instance (same store + ProcessLock
+   * the ONE shared RequestBroker instance (same store + ProcessLock
    * as the OpenAI path). When present, opt-in idempotency via X-Request-Id
    * applies to /v1/messages; absent → behavior unchanged (no forced
    * idempotency).
@@ -102,7 +102,7 @@ function promptChars(messages: ChatMessage[]): number {
 }
 
 /**
- * Task 12 — serves a stored broker result as a NATIVE Anthropic response.
+ * serves a stored broker result as a NATIVE Anthropic response.
  * The stored `nativeReplay` (the exact object the first execution returned)
  * is replayed as-is for JSON; for SSE the native event sequence is rebuilt
  * from the stored text with the SAME formatters (message_start →
@@ -258,7 +258,7 @@ export function registerAnthropicRoutes(
     opts.tracker?.recordRequestStart({ id, model, stream: Boolean(body.stream), promptChars: pChars, clientAgent });
     let completionChars = 0;
 
-    // ---- Task 12: unified claim-once broker (opt-in via X-Request-Id) ----
+    // ---- unified claim-once broker (opt-in via X-Request-Id) ----
     // The fingerprint is computed over the EFFECTIVE body (after scoped-group
     // model coercion) so it covers every execution-affecting input. The claim
     // runs BEFORE any driver lookup: failures before the send still release
@@ -452,7 +452,7 @@ export function registerAnthropicRoutes(
               id,
               model,
               content: streamFull,
-              // Native replay payload for this protocol (Task 12 decision):
+              // Native replay payload for this protocol:
               // SSE replays are rebuilt from {id, model, text} via the native
               // formatters — chunk slicing of the original stream is not kept.
               nativeReplay: { id, model, text: streamFull },

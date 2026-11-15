@@ -1,3 +1,4 @@
+import { extractMessageText } from '../arena/models.js';
 import type { ChatMessage } from '../types.js';
 import { createHash } from 'node:crypto';
 import { NEUTRAL_CORRECTION_MARKER } from '../arena/tool-bridge-markers.js';
@@ -186,7 +187,7 @@ export function injectToolsInstruction(
     for (const [k, v] of Object.entries(schema as Record<string, unknown>)) {
       if (DROP_KEYS.has(k)) continue;
       if (k === 'title' && depth > 0) continue;
-      // chatgpt-web-tool-bridge lesson: over-compressed schemas lose field
+      // over-compressed schemas lose field
       // semantics and the model sends wrong arguments. Keep TOP-LEVEL property
       // descriptions (short) — deeper nesting stays structure-only.
       if (k === 'description' && depth === 1) { out[k] = shrinkText(v, 80).split('\n')[0]; continue; }
@@ -227,6 +228,8 @@ export function injectToolsInstruction(
     'Rules:',
     '- Use only the tools/parameters above. "arguments" must be a JSON object matching the schema.',
     '- If the task requires local inspection/action, your response must be the needed tool_call block(s) (not a refusal).',
+    '- For terminal/shell environments, use exec_command to inspect paths (e.g. ls -la <path>, cat <file>, git status).',
+    '- view_image is strictly for image files (.png, .jpg, etc.), never for directories, repositories or code files.',
     '- After tool results are provided, continue and call more tools if needed.',
     '- Only answer in plain text when no tool is needed.',
   ].join('\n');
@@ -239,7 +242,7 @@ export function injectToolsInstruction(
   let out: ChatMessage[];
   if (existingSystemIdx >= 0) {
     out = [...messages];
-    const sysContent = String(out[existingSystemIdx].content || '');
+    const sysContent = extractMessageText(out[existingSystemIdx].content);
     if (!sysContent.includes(marker)) {
       out[existingSystemIdx] = { ...out[existingSystemIdx], content: `${sysContent}\n\n${toolInstruction}` };
     }
@@ -249,12 +252,13 @@ export function injectToolsInstruction(
 
   const last = out[out.length - 1];
   if (last && last.role === 'tool') {
-    const hasCont = typeof last.content === 'string' && last.content.includes('Tool results are provided above');
+    const lastContent = extractMessageText(last.content);
+    const hasCont = lastContent.includes('Tool results are provided above');
     if (!hasCont) {
       out.push({ role: 'user', content: 'Tool results are provided above. Continue the task now: if you need to inspect/run/edit anything, respond with the appropriate ```tool_call``` block(s). Do not claim lack of access.' });
     }
   } else if (last && last.role === 'user') {
-    const lc = typeof last.content === 'string' ? last.content : '';
+    const lc = extractMessageText(last.content);
     if (!lc.includes('IMPORTANT (override): Tools are available NOW')) {
       // Push the nudge as its OWN message instead of appending it to the
       // client's user message. Appending mutates the client's content, so the
@@ -317,6 +321,12 @@ export function detectToolRefusal(content: string): boolean {
     /\btools? (?:are|is) not (?:accessible|enabled|active)\b/i,
     /\bdon't have (?:access to|any) tools\b/i,
     /\bcannot (?:use|access|run|invoke) (?:the )?tools?\b/i,
+    /\b(?:mcp\s*tunnel|tunnel\s*mcp|ngrok|cloudflare\s*tunnel|cloudflared|localtunnel)\b/i,
+    /\b(?:require|requires|need|needs|setup|create|open|provide)\b[^.\n]{0,50}\b(?:tunnel|mcp\s*tunnel)\b/i,
+    /\b(?:cannot|can\'t|unable to)\b[^.\n]{0,50}\b(?:local\s*files|local\s*machine|local\s*directory)\b/i,
+    /(?:نفق|tunnel)\s*(?:mcp|ام\s*سي\s*بي)?/i,
+    /(?:إعداد|فتح|تحتاج\s*إلى|يلزم|إنشاء|توفير)\s*نفق/i,
+    /(?:لا\s*يمكنني|لا\s*أستطيع)\s*الوصول\s*(?:إلى|على)?\s*ملفات\s*(?:الجهاز|المحلية)/i,
     /لا أستطيع الاتصال بـ/,
     /لا يمكنني الوصول إلى الأدوات/,
     /الأدوات غير متاحة/,
@@ -625,7 +635,7 @@ export interface UnsupportedDependencyClaim {
 
 /** Claims that an external component must be installed/launched/connected. */
 const EXTERNAL_COMPONENT_CLAIM =
-  /\b(open|launch|start|install|run|enable|restart|connect|reconnect)\b[^.\n]{0,80}\b(client|service|server|daemon|component|app|application|tunnel|broker|gateway|connector|agent)\b/i;
+  /\b(open|launch|start|install|run|enable|restart|connect|reconnect|require|need|setup|create|provide)\b[^.\n]{0,80}\b(client|service|server|daemon|component|app|application|tunnel|mcp|broker|gateway|connector|agent)\b/i;
 /** Claims that the execution channel itself is broken/inactive. */
 const EXECUTION_CHANNEL_CLAIM =
   /\b(connection|connectivity|channel|bridge|link)\b[^.\n]{0,50}\b(down|inactive|unavailable|not active|disconnected|broken|not working|failed|missing)\b/i;
@@ -664,8 +674,9 @@ export function detectUnsupportedDependencyClaim(content: string): UnsupportedDe
 export function buildNeutralCorrectionMessage(): string {
   return [
     `${NEUTRAL_CORRECTION_MARKER}, and the calling client provides their execution environment.`,
+    'Local workspace file tools are available directly in this session via ```tool_call```.',
+    'Do not request or assume any external component or network bridge that is not among the announced tools, and do not state a connection problem that no execution result has confirmed.',
     'If the task needs a tool, respond with the required ```tool_call``` block(s) in the specified format.',
-    'Do not request or assume any external component that is not among the announced tools, and do not state a connection problem that no execution result has confirmed.',
   ].join('\n');
 }
 

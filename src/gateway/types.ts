@@ -223,6 +223,14 @@ export interface McpSettings {
    * directory. Narrow it to keep the agents inside a project.
    */
   workspaceRoots?: string[];
+  /**
+   * OpenAI Platform Organization Tunnel or public MCP tunnel URL (e.g. from
+   * https://platform.openai.com/settings/organization/tunnels).
+   */
+  openaiTunnelUrl?: string;
+  tunnelToken?: string;
+  tunnelId?: string;
+  tunnelAutoStart?: boolean;
 }
 
 export interface DiscoverySettings {

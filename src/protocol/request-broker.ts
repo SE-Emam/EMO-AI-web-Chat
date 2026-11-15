@@ -1,5 +1,5 @@
 /**
- * Claim-once request broker (chat-on-steroids request-broker principle).
+ * Claim-once request broker .
  *
  * An opt-in idempotency layer keyed by (apiKey scope, providerId, X-Request-Id).
  * The first begin() claims the key and is allowed to execute; any concurrent
@@ -46,14 +46,14 @@ export interface BrokerEntry {
   createdAt: number;
   updatedAt: number;
   /**
-   * Task 11 — durable one-time execution reservation (owner mandatory mod
+   * durable one-time execution reservation (owner mandatory mod
    * #1/#5). Records WHO actually executes the request in the owner process,
    * separating: claimed at receiver / reached owner / send started /
    * finished. Never a state-name substitute; a duplicate IPC command can
    * never start a second execution.
    */
   attachment?: ExecutionAttachment;
-  /** Task 12 — payload fingerprint (sha256 over ALL execution-affecting options + protocol). Optional for backward compat. */
+  /** payload fingerprint (sha256 over ALL execution-affecting options + protocol). Optional for backward compat. */
   fingerprint?: string;
 }
 
@@ -152,7 +152,7 @@ export interface SentController {
 
 export type Begin =
   | { allowed: true; state: 'running'; complete: SentController['complete']; fail: SentController['fail']; markUnconfirmed: SentController['markUnconfirmed']; markSent: () => void }
-  | { allowed: false; state: RequestState; result?: unknown; reason?: string; /** Task 12 — same key + different payload fingerprint: explicit conflict, never a silent replay. */ conflict?: boolean };
+  | { allowed: false; state: RequestState; result?: unknown; reason?: string; /** same key + different payload fingerprint: explicit conflict, never a silent replay. */ conflict?: boolean };
 
 export class RequestBroker {
   private readonly storePath: string;
@@ -171,7 +171,7 @@ export class RequestBroker {
   }
 
   /**
-   * Task 14 — additive /health metric: entry counts per request state,
+   * additive /health metric: entry counts per request state,
    * READ-ONLY (never creates or mutates the store).
    */
   countByState(): { running: number; completed: number; failed: number; unconfirmed: number } {
@@ -203,7 +203,7 @@ export class RequestBroker {
    * check-and-claim runs under the ProcessLock, so two racing processes can
    * never both observe "absent".
    *
-   * Task 12 — payload fingerprint: when the caller supplies one and the
+   * payload fingerprint: when the caller supplies one and the
    * existing entry ALSO stores one, any mismatch is an explicit CONFLICT for
    * EVERY state (running/completed/failed/unconfirmed) — the same
    * X-Request-Id was reused with a different request; a silent replay would
@@ -324,7 +324,7 @@ export class RequestBroker {
     });
   }
 
-  // ---- Task 11: atomic one-time execution attachment (shared durable store) ----
+  // ---- atomic one-time execution attachment (shared durable store) ----
 
   private cacheResult(entry: BrokerEntry, result: unknown): void {
     let bytes = 0;
@@ -369,7 +369,7 @@ export class RequestBroker {
       fail: (opts, proof) => update(proof, (entry) => {
         // With a durable ExecutionAttachment, the OWNER's sentAt is the
         // authoritative send evidence: the receiver may have conservatively
-        // marked sent BEFORE the forward (Task 10 policy), which must not
+        // marked sent BEFORE the forward, which must not
         // mask a pre-send owner failure.
         const sent = entry.attachment?.sentAt != null;
         if (sent) {
@@ -398,7 +398,7 @@ export class RequestBroker {
   }
 
   /**
-   * Atomic ONE-TIME execution reservation (owner mandatory mod #1).
+   * Atomic ONE-TIME execution reservation .
    * Runs entirely under the cross-process ProcessLock over the SHARED store:
    * the first caller wins; a duplicate IPC command (different executor or a
    * new forwardId) is refused with already_attached and must NOT start a

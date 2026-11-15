@@ -3,6 +3,7 @@ import type { ArenaDriver, ChatMessage, QwenWebConfig } from '../types.js';
 import { cleanupStaleProfileLocks } from '../browser/manager.js';
 import { formatMessages } from './models.js';
 import { DEFAULT_QWEN_WEB_BASE_URL } from '../config.js';
+import { providerSessionRouter } from './provider-session-router.js';
 
 const COMPOSER = 'textarea.message-input-textarea, textarea[placeholder*="help you"], textarea[placeholder*="How can I"]';
 const SEND = 'button.send-button[aria-label="Send"], .message-input-right-button-send button, button[aria-label*="Send"]';
@@ -33,7 +34,7 @@ export class QwenWebDriver implements ArenaDriver {
   private readonly config: QwenWebConfig;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
-  /** Task 13 — declared serialized session lane (single shared page → global serialization). */
+  /** declared serialized session lane (single shared page → global serialization). */
   private readonly sendQueue = new SerializedSessionSendQueue();
 
   constructor(config: QwenWebConfig) {
@@ -66,7 +67,7 @@ export class QwenWebDriver implements ArenaDriver {
     };
   }
 
-  /** Task 14 — breaker key half: the durable profile this driver runs against. */
+  /** breaker key half: the durable profile this driver runs against. */
   getProfileDir(): string {
     return this.config.userDataDir;
   }
@@ -82,27 +83,39 @@ export class QwenWebDriver implements ArenaDriver {
     const page = await this.ensurePage();
     const base = (this.config.baseUrl || DEFAULT_QWEN_WEB_BASE_URL).replace(/\/$/, '');
 
-    console.log('[QwenWeb] Navigating to chat.qwen.ai...');
-    await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch((e) =>
-      console.log('[QwenWeb] goto error:', e.message)
-    );
-    await page.waitForTimeout(2500);
-    await this.assertAuthenticated(page);
-    await this.startNewChatIfPossible(page).catch(() => {});
-    await page.waitForTimeout(700);
+    const shouldRotate = providerSessionRouter.shouldRotate('qwen-web');
+    const currentUrl = page.url() || '';
+    const isNew = !currentUrl || currentUrl === 'about:blank' || !currentUrl.includes('qwen.ai');
+    if (shouldRotate || isNew) {
+      if (shouldRotate) {
+        providerSessionRouter.rotateSession('qwen-web', 'turn_limit_reached');
+      }
+      console.log('[QwenWeb] Navigating to chat.qwen.ai (fresh session)...');
+      await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch((e) =>
+        console.log('[QwenWeb] goto error:', e.message)
+      );
+      await page.waitForTimeout(2500);
+      await this.assertAuthenticated(page);
+      await this.startNewChatIfPossible(page).catch(() => {});
+      await page.waitForTimeout(700);
+    } else {
+      console.log(`[QwenWeb] Continuing active session in existing chat (${currentUrl})...`);
+    }
 
     const beforeCount = await page.locator(ASSISTANT).count().catch(() => 0);
     const prompt = formatMessages(messages);
     await this.fillComposer(page, prompt, signal);
     await this.clickSend(page, signal);
-    return await this.waitForResponse(page, beforeCount, onChunk, signal);
+    const result = await this.waitForResponse(page, beforeCount, onChunk, signal);
+    providerSessionRouter.recordTurn('qwen-web', page.url(), result.length);
+    return result;
   }
 
   private async assertAuthenticated(page: Page): Promise<void> {
     const url = page.url();
     if (/\/auth\b|\/login\b|\/signin\b/i.test(url)) {
       throw new Error(
-        'Qwen session is not authenticated (login URL). Run: node scripts/login-qwen-web.mjs (complete login/verification, close window), then retry. Profile: ' +
+        'Qwen session is not authenticated (login URL). Run login from the management UI (http://127.0.0.1:8989) or run "npm run login", then retry. Profile: ' +
           this.config.userDataDir
       );
     }
@@ -115,7 +128,7 @@ export class QwenWebDriver implements ArenaDriver {
     }).catch(() => ({ hasComposer: false, hasAuthChrome: false, hasLoginCta: false }));
     if (!state.hasComposer && !state.hasAuthChrome && state.hasLoginCta) {
       throw new Error(
-        'Qwen session is not authenticated. Run: node scripts/login-qwen-web.mjs (complete login/verification, close window), then retry. Profile: ' +
+        'Qwen session is not authenticated. Run login from the management UI (http://127.0.0.1:8989) or run "npm run login", then retry. Profile: ' +
           this.config.userDataDir
       );
     }

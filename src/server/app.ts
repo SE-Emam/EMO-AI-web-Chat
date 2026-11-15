@@ -31,17 +31,19 @@ import { OwnerRoutingDriver, ProfileOwnerRouter, type ForwardBrokerContext } fro
 import { defaultBrokerStorePath } from '../protocol/request-broker.js';
 import { SessionQueue } from '../sessions/session-queue.js';
 import { ToolPipelineLogger } from './tool-pipeline-logger.js';
+import { WORKSPACE_TOOLS } from './workspace-tools.js';
+import { extractMessageText } from '../arena/models.js';
 
 /**
- * Task 11 — request-scoped receiver broker context for cross-process
+ * request-scoped receiver broker context for cross-process
  * forwarding: the receiver's claim-once key flows into OwnerRoutingDriver
  * when a ProfileBusyError triggers a forward. AsyncLocalStorage keeps the
  * context per request — concurrent requests can never mix broker keys.
  */
 const routingBrokerStorage = new AsyncLocalStorage<ForwardBrokerContext>();
 
-/** Provider selection point for Task 11: a DYNAMIC resolver wrapper — the
- * resolved driver is re-evaluated per request (owner mandatory mod #3), so
+/** Provider selection point for a DYNAMIC resolver wrapper — the
+ * resolved driver is re-evaluated per request , so
  * account switches and RoutingDriver chains are always reflected. */
 function makeRoutingAwareDriver(resolve: () => ArenaDriver): ArenaDriver {
   const router = new ProfileOwnerRouter({
@@ -57,9 +59,7 @@ function makeRoutingAwareDriver(resolve: () => ArenaDriver): ArenaDriver {
 }
 
 /**
- * Session identity for web-chat continuation (chatgpt-web-tool-bridge lesson:
- * never identify a session by the API key alone — two agent conversations may
- * share one key and would otherwise interleave into the same web chat).
+ * Session identity for web-chat continuation .
  *
  * Priority: explicit client header `X-Chat-Session-ID`, then body
  * `metadata.session_id`, then a stable fingerprint of the task itself
@@ -154,7 +154,7 @@ function promptChars(messages: ChatCompletionRequest['messages'] | undefined): n
 export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions, config?: Partial<Config>): FastifyInstance {
   const gatewayMode = !isDriver(driverOrGateway) && (driverOrGateway as any)?.mode === 'gateway';
   const gateway = gatewayMode ? (driverOrGateway as GatewayServerOptions) : undefined;
-  // Task 11 (category C): in gateway mode the driver selection point is
+  // : in gateway mode the driver selection point is
   // wrapped with the dynamic OwnerRoutingDriver — ProfileBusyError triggers a
   // forward to the owning process instead of a plain 503. Non-gateway usage
   // (single local driver) is untouched.
@@ -331,7 +331,7 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
     app.get('/', healthHandler);
   }
   app.get('/health', async () => {
-    // Task 14 — LOCAL state only. /health NEVER sends a message to ChatGPT
+    // LOCAL state only. /health NEVER sends a message to ChatGPT
     // or any other provider (no driver calls in this handler), and never
     // reports a provider as "available" without an actual verification —
     // provider state stays 'not_checked'. No secrets are included.
@@ -436,7 +436,7 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
     let brokerKeyStr: string | null = null;
     if (requestIdHeader) {
       brokerKeyStr = brokerKey(apiKeyScope, model, requestIdHeader);
-      // Task 12.1 — UNIFIED X-Request-Id semantics: the fingerprint covers
+      // UNIFIED X-Request-Id semantics: the fingerprint covers
       // the EFFECTIVE body (post scoped-group model coercion) so the same
       // id reused with a different request is an explicit CONFLICT with the
       // same reason token the Anthropic/Gemini paths return — never a
@@ -475,7 +475,7 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
             reply.raw.end();
             return;
           }
-          // Task 12.1: the replay marker is now uniform across the three
+          // the replay marker is now uniform across the three
           // EMO interfaces (Anthropic/Gemini already set it on JSON replays).
           reply.header('x-emo-replay', 'true');
           return reply.send(stored);
@@ -506,7 +506,7 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
     // called immediately before each driver send in every path below.
     const brokerFail = (message: string) => brokerCtrl?.fail({ retryable: true, error: message }).catch(() => {});
 
-    // Task 11: the receiver's claim flows into any cross-process forward.
+    // the receiver's claim flows into any cross-process forward.
     const routingCtx: ForwardBrokerContext | null = brokerKeyStr
       ? { key: brokerKeyStr, apiKeyScope, providerId: model, requestId: requestIdHeader }
       : null;
@@ -542,7 +542,7 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
           };
 
           let swarmFull = '';
-          // Task 10 (final-audit finding): the swarm call below is the FIRST
+          // : the swarm call below is the FIRST
           // operation that can cause a real side effect — its agents may send
           // messages to real web chats. From here on, ANY failure (mid-stream
           // abort included) is 'unconfirmed': a blind retry could duplicate
@@ -584,7 +584,7 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
         const error = err as { statusCode?: number; type?: string; message?: string };
         await brokerFail(error.message || 'swarm coordination failed');
         gateway?.tracker.recordRequestEnd({ id, ok: false, completionChars, error: error.message });
-        // Task 10: after the SSE stream was hijacked/started, reply.status().send()
+        // after the SSE stream was hijacked/started, reply.status().send()
         // is illegal — the client must get a TERMINATED stream (error event +
         // DONE) instead of a hanging connection. No headers yet → normal 500.
         if (reply.raw.headersSent) {
@@ -604,9 +604,29 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
       }
     }
 
-    // 1. Tool Injection (if tools are provided by agent client)
+    // 1. Tool Injection (if tools are provided by agent client or local paths detected)
     let processedMessages = body.messages as ChatCompletionRequest['messages'];
-    const toolCount = Array.isArray(body.tools) ? body.tools.length : 0;
+    let toolsToUse = Array.isArray(body.tools) ? body.tools : undefined;
+    if ((!toolsToUse || toolsToUse.length === 0) && body.tool_choice !== 'none') {
+      const mentionsLocalFiles = processedMessages.some((m) => {
+        const text = extractMessageText(m.content);
+        return (
+          /(?:\/Users\/|\/home\/|~\/|\.\/|[a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]{1,8}\b)/.test(text) ||
+          /(?:read\s*file|list\s*dir|search\s*file|اقرأ|افحص|فحص|ملف|مجلد|كود|code)/i.test(text)
+        );
+      });
+      if (mentionsLocalFiles) {
+        toolsToUse = WORKSPACE_TOOLS.map((t) => ({
+          type: 'function',
+          function: {
+            name: t.name,
+            description: t.description,
+            parameters: t.parameters,
+          },
+        }));
+      }
+    }
+    const toolCount = Array.isArray(toolsToUse) ? toolsToUse.length : 0;
     const toolRes = resolveToolChoice(body.tool_choice, toolCount);
     const pipelineLog = new ToolPipelineLogger(id, (evt) => {
       console.log(`[tool-pipeline] ${JSON.stringify({ ...evt, correlationId: undefined })} corrId=${evt.correlationId}`);
@@ -616,7 +636,7 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
       pipelineLog.toolDefinitionsBuilt(toolCount);
       pipelineLog.toolAvailableInRequest(toolCount);
       processedMessages = hydrateToolResultNames(processedMessages as ChatCompletionRequest['messages']);
-      processedMessages = injectToolsInstruction(processedMessages, body.tools, body.tool_choice);
+      processedMessages = injectToolsInstruction(processedMessages, toolsToUse, body.tool_choice);
       pipelineLog.toolDefinitionsSent('openai');
     } else {
       console.log(`[chat] model=${model} stream=${!!body.stream} tools=${toolCount} tool_choice=${body.tool_choice ?? 'none'} inject=false msgs=${processedMessages.length}`);
@@ -625,9 +645,23 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
     // 2. Secret Redaction (Mask sensitive API keys, tokens, passwords before leaving local host)
     const secretMappings: Record<string, string> = {};
     processedMessages = processedMessages.map((m) => {
-      const { redactedText, mapping } = redactSecrets(m.content);
-      Object.assign(secretMappings, mapping);
-      return { ...m, content: redactedText };
+      if (typeof m.content === 'string') {
+        const { redactedText, mapping } = redactSecrets(m.content);
+        Object.assign(secretMappings, mapping);
+        return { ...m, content: redactedText };
+      }
+      if (Array.isArray((m as any).content)) {
+        const newParts = ((m as any).content as any[]).map((p: any) => {
+          if (p && typeof p === 'object' && typeof p.text === 'string') {
+            const { redactedText, mapping } = redactSecrets(p.text);
+            Object.assign(secretMappings, mapping);
+            return { ...p, text: redactedText };
+          }
+          return p;
+        });
+        return { ...m, content: newParts };
+      }
+      return m;
     });
 
     try {
@@ -658,10 +692,10 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
             if (!toolResult.hasToolCalls && /tool[_ -]?call/i.test(fullResponse)) {
               console.log(`[chat] WARNING: reply contains "tool_call" but none parsed (len=${fullResponse.length}). Tail: ${fullResponse.slice(-250)}`);
             }
-            if (toolResult.hasToolCalls && Array.isArray(body.tools)) {
+            if (toolResult.hasToolCalls && Array.isArray(toolsToUse)) {
               // Exact tool-name matching (chatgpt-web-tool-bridge lesson): never
               // guess a name by similarity; surface unknown names loudly.
-              const known = new Set(body.tools.map((t: any) => t?.function?.name).filter(Boolean));
+              const known = new Set(toolsToUse.map((t: any) => t?.function?.name).filter(Boolean));
               const unknown = (toolResult.toolCalls || []).filter((c: any) => !known.has(c.function?.name));
               if (unknown.length) {
                 console.log(`[chat] WARNING: parsed tool name(s) not in provided tools: ${unknown.map((c: any) => c.function?.name).join(', ')}`);
@@ -949,7 +983,7 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
     apiKey,
     getValidApiKeys: () => (gateway && typeof gateway.manager.getValidApiKeys === 'function' ? gateway.manager.getValidApiKeys() : [apiKey]),
     getScopedGroup: (key: string) => (gateway && typeof (gateway.manager as any).getGroupForApiKey === 'function' ? (gateway.manager as any).getGroupForApiKey(key) : undefined),
-    // Task 12: the ONE shared broker instance/store across all three protocols.
+    // the ONE shared broker instance/store across all three protocols.
     broker: requestBroker,
   });
 
@@ -960,7 +994,7 @@ export function createServer(driverOrGateway: ArenaDriver | GatewayServerOptions
     apiKey,
     getValidApiKeys: () => (gateway && typeof gateway.manager.getValidApiKeys === 'function' ? gateway.manager.getValidApiKeys() : [apiKey]),
     getScopedGroup: (key: string) => (gateway && typeof (gateway.manager as any).getGroupForApiKey === 'function' ? (gateway.manager as any).getGroupForApiKey(key) : undefined),
-    // Task 12: the ONE shared broker instance/store across all three protocols.
+    // the ONE shared broker instance/store across all three protocols.
     broker: requestBroker,
   });
 

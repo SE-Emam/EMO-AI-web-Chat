@@ -1,8 +1,5 @@
 /**
- * Durable, versioned registry of local sessions (chat-on-steroids
- * session/correlation.ts principle: session identity is durable metadata that
- * survives process restarts — the tab/page is a replaceable resource, never
- * the identity).
+ * Durable, versioned registry of local sessions .
  *
  * All read-modify-write cycles run inside a cross-process ProcessLock, so two
  * gateway processes cannot silently overwrite each other's updates: the

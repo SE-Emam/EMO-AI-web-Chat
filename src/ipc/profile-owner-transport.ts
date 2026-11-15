@@ -1,5 +1,5 @@
 /**
- * Profile-owner IPC transport (Task 11).
+ * Profile-owner IPC transport .
  *
  * A LOCAL-ONLY loopback HTTP channel (127.0.0.1, ephemeral port) that lets a
  * gateway process forward a chat execution to the process that actually owns
@@ -22,11 +22,11 @@
  * (the caller performs the atomic durable reservation BEFORE calling the
  * hook chain — order enforced by profile-owner-router).
  *
- * Backpressure (owner mandatory mod #4): every response write checks
+ * Backpressure : every response write checks
  * `write() === false` and awaits `drain` before the next chunk. The idle
  * timeout is configurable and resets per chunk — there is deliberately NO
- * fixed total generation timeout in Task 11 (total timeouts belong to
- * Task 14's configurable providerTimeoutsMs).
+ * fixed total generation timeout (total timeouts belong to
+ * 's configurable providerTimeoutsMs).
  */
 import http from 'node:http';
 import fs from 'node:fs';
@@ -130,7 +130,7 @@ export function writeOwnerIpcSidecar(
   const file = ownerIpcSidecarPath(stateRoot, profileDir);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   // Includes state fingerprints so a receiver can PROVE shared durable state
-  // before routing (owner mandatory mod #4) — paths normalized first.
+  // before routing  — paths normalized first.
   const body = {
     ...data,
     stateRootNormalized: normalizeProfileDir(data.stateRoot),

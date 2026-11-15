@@ -141,7 +141,7 @@ export class UsageTracker {
   }
 
   /**
-   * Task 14 — additive /health metric: requests currently in flight
+   * additive /health metric: requests currently in flight
    * (started but not yet ended). Never mutates tracking state.
    */
   inFlightCount(): number {

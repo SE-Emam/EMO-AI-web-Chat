@@ -1,8 +1,5 @@
 /**
- * Cross-process ownership ledger for browser profiles (chat-on-steroids
- * browser-control.ts principle: exclusive, verifiable ownership; a dead
- * owner's claim is taken over, a live owner's is never overwritten, and only
- * the owner itself may release).
+ * Cross-process ownership ledger for browser profiles .
  *
  * POLICY (documented, v2 plan): exclusive ownership — exactly one gateway
  * process owns a given browser profile. Another process is refused safely
@@ -24,7 +21,7 @@ export interface ProfileOwnershipEntry {
   pid: number;
   epoch: string;
   heartbeatAt: number;
-  /** Task 11 — advertised only after the loopback IPC server is actually listening. */
+  /** advertised only after the loopback IPC server is actually listening. */
   ipcEndpoint?: string;
   protocolVersion?: number;
   startedAt?: number;
@@ -126,7 +123,7 @@ export class OwnershipLedger {
     });
   }
 
-  /** Task 11 — advertises the loopback IPC endpoint on the owner's OWN entry.
+  /** advertises the loopback IPC endpoint on the owner's OWN entry.
    * Only the owner may write it; the endpoint must already be listening. */
   async updateIpcEndpoint(rawDir: string, ownerInstanceId: string, ipcEndpoint: string): Promise<boolean> {
     const profileDir = normalizeProfileDir(rawDir);

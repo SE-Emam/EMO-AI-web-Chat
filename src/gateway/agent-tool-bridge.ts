@@ -20,12 +20,13 @@
  * own tool does the work and the result comes back through the normal
  * agent loop.
  * 
- * Fact-only environment block (Phase 1): Replaces judgmental language with
+ * Fact-only environment block : Replaces judgmental language with
  * facts about the workspace, tools, and execution model.
  */
 import fs from 'node:fs';
 import { NEUTRAL_CORRECTION_MARKER } from '../arena/tool-bridge-markers.js';
 import type { ChatMessage } from '../types.js';
+import { extractMessageText } from '../arena/models.js';
 
 /** The marker injectToolsInstruction() writes into the system message. */
 export const TOOL_MODE_MARKER = '### TOOL CALLING MODE (MANDATORY';
@@ -35,7 +36,7 @@ export interface AnnouncedTool {
   description: string;
   parameters: {
     type?: string;
-    properties?: Record<string, { type?: string; description?: string }>;
+    properties?: Record<string, { type?: string; description?: string; [k: string]: unknown }>;
     required?: string[];
     [k: string]: unknown;
   };
@@ -61,7 +62,7 @@ export interface ToolCallBlock {
 export function extractAnnouncedTools(messages: ChatMessage[]): AnnouncedTool[] {
   const sources: string[] = [];
   for (const m of messages || []) {
-    const content = typeof m?.content === 'string' ? m.content : '';
+    const content = extractMessageText(m?.content);
     if (content.includes(TOOL_MODE_MARKER) || content.includes('Available tools (JSON schemas)')) {
       sources.push(content);
     }
@@ -137,16 +138,13 @@ export function pathArgumentOf(tool: AnnouncedTool): string | null {
   const required = new Set((tool.parameters?.required || []).map((r) => String(r)));
   const candidates = Object.keys(props).filter((k) => {
     const type = props[k]?.type;
-    return type === 'string' || type === undefined;
+    return (type === 'string' || type === undefined) && PATH_ARG_RE.test(k);
   });
-  const ordered = [
-    ...candidates.filter((k) => PATH_ARG_RE.test(k)),
-    ...candidates.filter((k) => !PATH_ARG_RE.test(k)),
-  ];
-  for (const key of ordered) {
+  if (!candidates.length) return null;
+  for (const key of candidates) {
     if (required.has(key)) return key;
   }
-  return ordered[0] || null;
+  return candidates[0] || null;
 }
 
 /**
@@ -156,10 +154,14 @@ export function pathArgumentOf(tool: AnnouncedTool): string | null {
 export function pickFileTool(tools: AnnouncedTool[], kind: 'file' | 'directory'): { tool: AnnouncedTool; arg: string } | null {
   const scored: { tool: AnnouncedTool; arg: string; score: number }[] = [];
   for (const tool of tools) {
+    const name = tool.name.toLowerCase();
+    if (/mcp_resource|mcp_template|mcp_prompt|list_tools/i.test(name)) continue;
+    // Media, image, latex, and specialized tools are never general file/directory readers
+    if (/image|photo|picture|screenshot|icon|bitmap|latex|worktree|archive|pdf/i.test(name)) continue;
+    const desc = tool.description.toLowerCase();
+    if (/\b(?:image|photo|picture|screenshot)\b/i.test(desc)) continue;
     const arg = pathArgumentOf(tool);
     if (!arg) continue;
-    const name = tool.name.toLowerCase();
-    const desc = tool.description.toLowerCase();
     let score = 0;
     if (kind === 'file') {
       if (/read|cat|open|view|content/.test(name)) score += 6;
@@ -197,7 +199,7 @@ export function buildToolCallBlock(toolName: string, argName: string, path: stri
  * The hint that goes into the prompt: the exact block to emit, and nothing
  * that could be read as "the file environment is broken".
  *
- * Facts only (the rule copied from chat-on-steroids): a line that tells the
+ * Facts only (the rule copied from web gateway): a line that tells the
  * model how to JUDGE its situation is not a fact, and a model told how to
  * judge answers with a refusal instead of a call. The protocol itself — the
  * shape of the request — is not a judgment and stays.
@@ -225,7 +227,7 @@ export function buildHintSection(call: ToolCallBlock, phase: 'first' | 'next' = 
 }
 
 /**
- * Fact-only environment block (Phase 1): Builds a system message block with
+ * Fact-only environment block : Builds a system message block with
  * facts about the workspace, tools, and execution model — no judgments.
  */
 export function buildFactOnlyEnvironmentBlock(tools: AnnouncedTool[], roots: string[]): string {
@@ -347,7 +349,7 @@ export function buildCorrectionMessage(
 export function buildContinuationCall(messages: ChatMessage[], tools: AnnouncedTool[]): ToolCallBlock | null {
   const results = (messages || []).filter((m) => m?.role === 'tool');
   const last = results[results.length - 1];
-  const content = typeof last?.content === 'string' ? last.content : '';
+  const content = extractMessageText(last?.content);
   if (!content.trim()) return null;
   const dir = findTaskPath(messages);
   if (!dir || classifyPath(dir) !== 'directory') return null;
@@ -362,12 +364,32 @@ export function buildContinuationCall(messages: ChatMessage[], tools: AnnouncedT
   const file = names.find((n) => /\.[A-Za-z0-9]{1,12}$/.test(n)) || names[0];
   const path = file.startsWith('/') ? file : `${dir.replace(/\/+$/, '')}/${file}`;
   const picked = pickFileTool(tools, 'file');
-  if (!picked) return null;
-  return buildToolCallBlock(picked.tool.name, picked.arg, path);
+  if (picked) {
+    return buildToolCallBlock(picked.tool.name, picked.arg, path);
+  }
+  const cmdTool = tools.find((t) =>
+    /^(?:exec_command|execute_command|bash|shell|run_command|terminal)$/i.test(t.name) ||
+    /(?:execute|run).*(?:command|shell|pty|terminal)/i.test(t.description)
+  );
+  if (cmdTool) {
+    const payload: Record<string, unknown> = { cmd: `cat "${path}"` };
+    if (cmdTool.parameters?.properties && 'workdir' in cmdTool.parameters.properties) {
+      payload.workdir = dir;
+    }
+    const fullPayload = { name: cmdTool.name, arguments: payload };
+    return {
+      tool: cmdTool.name,
+      arg: 'cmd',
+      path,
+      payload: fullPayload,
+      block: '```tool_call\n' + JSON.stringify(fullPayload) + '\n```',
+    };
+  }
+  return null;
 }
 
 /**
- * Continuation block after tool results (Phase 3): Provides a fact-only
+ * Continuation block after tool results : Provides a fact-only
  * continuation message when a tool result has been received.
  */
 export function buildContinuationBlock(call: ToolCallBlock | null, tools: AnnouncedTool[]): string {
@@ -419,18 +441,18 @@ export function withCorrectionSection(messages: ChatMessage[], correction: strin
   if (idx < 0) {
     const plain = out.findIndex((m) => m?.role === 'system');
     if (plain >= 0) {
-      out[plain] = { ...out[plain], content: `${String(out[plain].content || '')}\n\n${correction}` };
+      out[plain] = { ...out[plain], content: `${extractMessageText(out[plain].content)}\n\n${correction}` };
       return out;
     }
     out.unshift({ role: 'system', content: correction });
     return out;
   }
-  out[idx] = { ...out[idx], content: `${String(out[idx].content || '')}\n\n${correction}` };
+  out[idx] = { ...out[idx], content: `${extractMessageText(out[idx].content)}\n\n${correction}` };
   return out;
 }
 
 /**
- * Adds fact-only environment block to the system message (Phase 1).
+ * Adds fact-only environment block to the system message .
  */
 export function withFactOnlyEnvironment(messages: ChatMessage[], tools: AnnouncedTool[], roots: string[]): ChatMessage[] {
   const block = buildFactOnlyEnvironmentBlock(tools, roots);
@@ -438,7 +460,7 @@ export function withFactOnlyEnvironment(messages: ChatMessage[], tools: Announce
 }
 
 /**
- * Adds continuation block after tool results (Phase 3).
+ * Adds continuation block after tool results .
  */
 export function withContinuationBlock(messages: ChatMessage[], call: ToolCallBlock | null, tools: AnnouncedTool[]): ChatMessage[] {
   const block = buildContinuationBlock(call, tools);
@@ -454,13 +476,13 @@ export function withSystemBlock(messages: ChatMessage[], block: string): ChatMes
   if (idx < 0) {
     const plain = out.findIndex((m) => m?.role === 'system');
     if (plain >= 0) {
-      out[plain] = { ...out[plain], content: `${String(out[plain].content || '')}\n\n${block}` };
+      out[plain] = { ...out[plain], content: `${extractMessageText(out[plain].content)}\n\n${block}` };
       return out;
     }
     out.unshift({ role: 'system', content: block });
     return out;
   }
-  out[idx] = { ...out[idx], content: `${String(out[idx].content || '')}\n\n${block}` };
+  out[idx] = { ...out[idx], content: `${extractMessageText(out[idx].content)}\n\n${block}` };
   return out;
 }
 
@@ -658,7 +680,21 @@ export function looksLikeToolRefusal(text: string): boolean {
     /\bi (?:attempted|tried|was able|could not|couldn't) to (?:access|read|open|inspect|connect)\b/i,
     /\bwhen (?:the|your) (?:environment|connection|workspace) (?:is|becomes) (?:connected|available)\b/i,
     /\bnot (?:actually )?(?:run|executed|executed yet)\b/i,
+    // Tunnel & local file demands
+    /\b(?:mcp\s*tunnel|tunnel\s*mcp|ngrok|cloudflare\s*tunnel|cloudflared|localtunnel)\b/i,
+    /\b(?:require|requires|need|needs|setup|create|open|provide)\b[^.\n]{0,50}\b(?:tunnel|mcp\s*tunnel)\b/i,
+    /\b(?:cannot|can\'t|unable to)\b[^.\n]{0,50}\b(?:local\s*files|local\s*machine|local\s*directory)\b/i,
+    // Blocked status or refusal to proceed without tools
+    /\b(?:blocked|status:\s*blocked|cannot proceed|halting)\b/i,
+    /الحالة:\s*BLOCKED/i,
+    /لم يبدأ فحص/i,
+    /لا أريد تكرار المحاولات/i,
+    /محاولات خاطئة/i,
+    /مخصصة للصور وليست/i,
     // Arabic
+    /(?:نفق|tunnel)\s*(?:mcp|ام\s*سي\s*بي)?/i,
+    /(?:إعداد|فتح|تحتاج\s*إلى|يلزم|إنشاء|توفير)\s*نفق/i,
+    /(?:لا\s*يمكنني|لا\s*أستطيع)\s*الوصول\s*(?:إلى|على)?\s*ملفات\s*(?:الجهاز|المحلية)/i,
     /مشكلة في الاتصال/,
     /انقطاع (?:الاتصال|التواصل|وصول)/,
     /تعذّر/,
@@ -689,11 +725,13 @@ export function lastUserText(messages: ChatMessage[]): string {
   const isSynthetic = (content: string) =>
     /Tool results are provided above/.test(content) ||
     /IMPORTANT \(override\): Tools are available NOW/.test(content);
-  const users = (messages || []).filter(
-    (m) => m?.role === 'user' && typeof m?.content === 'string' && !isSynthetic(String(m.content)),
-  );
+  const users = (messages || []).filter((m) => {
+    if (m?.role !== 'user') return false;
+    const txt = extractMessageText(m?.content);
+    return Boolean(txt && !isSynthetic(txt));
+  });
   const last = users[users.length - 1];
-  return typeof last?.content === 'string' ? last.content : '';
+  return last ? extractMessageText(last.content) : '';
 }
 
 /**
@@ -705,8 +743,12 @@ export function findTaskPath(messages: ChatMessage[]): string | null {
     /Tool results are provided above/.test(content) ||
     /IMPORTANT \(override\): Tools are available NOW/.test(content);
   const users = (messages || [])
-    .filter((m) => m?.role === 'user' && typeof m?.content === 'string' && !isSynthetic(String(m.content)))
-    .map((m) => String(m.content))
+    .filter((m) => {
+      if (m?.role !== 'user') return false;
+      const txt = extractMessageText(m?.content);
+      return Boolean(txt && !isSynthetic(txt));
+    })
+    .map((m) => extractMessageText(m.content))
     .reverse();
   for (const text of users) {
     const path = findLocalPath(text);
@@ -739,8 +781,30 @@ export function buildRequestHint(messages: ChatMessage[]): ToolCallBlock | null 
   const kind = classifyPath(path);
   const wanted = kind === 'missing' ? guessPathKind(path) : kind;
   const picked = pickFileTool(tools, wanted === 'directory' ? 'directory' : 'file');
-  if (!picked) return null;
-  return buildToolCallBlock(picked.tool.name, picked.arg, path);
+  if (picked) {
+    return buildToolCallBlock(picked.tool.name, picked.arg, path);
+  }
+  const cmdTool = tools.find((t) =>
+    /^(?:exec_command|execute_command|bash|shell|run_command|terminal)$/i.test(t.name) ||
+    /(?:execute|run).*(?:command|shell|pty|terminal)/i.test(t.description)
+  );
+  if (cmdTool) {
+    const isDir = wanted === 'directory';
+    const cmd = isDir ? `ls -la "${path}"` : `cat "${path}"`;
+    const payload: Record<string, unknown> = { cmd };
+    if (cmdTool.parameters?.properties && 'workdir' in cmdTool.parameters.properties) {
+      payload.workdir = path;
+    }
+    const fullPayload = { name: cmdTool.name, arguments: payload };
+    return {
+      tool: cmdTool.name,
+      arg: 'cmd',
+      path,
+      payload: fullPayload,
+      block: '```tool_call\n' + JSON.stringify(fullPayload) + '\n```',
+    };
+  }
+  return null;
 }
 
 /**
@@ -764,8 +828,26 @@ export function buildWorkspaceRootCall(
   const root = (roots || []).find((r) => typeof r === 'string' && r.trim().length > 0);
   if (!root) return null;
   const picked = pickFileTool(tools, 'directory');
-  if (!picked) return null;
-  return buildToolCallBlock(picked.tool.name, picked.arg, root);
+  if (picked) return buildToolCallBlock(picked.tool.name, picked.arg, root);
+  const cmdTool = tools.find((t) =>
+    /^(?:exec_command|execute_command|bash|shell|run_command|terminal)$/i.test(t.name) ||
+    /(?:execute|run).*(?:command|shell|pty|terminal)/i.test(t.description)
+  );
+  if (cmdTool) {
+    const payload: Record<string, unknown> = { cmd: `ls -la "${root}"` };
+    if (cmdTool.parameters?.properties && 'workdir' in cmdTool.parameters.properties) {
+      payload.workdir = root;
+    }
+    const fullPayload = { name: cmdTool.name, arguments: payload };
+    return {
+      tool: cmdTool.name,
+      arg: 'cmd',
+      path: root,
+      payload: fullPayload,
+      block: '```tool_call\n' + JSON.stringify(fullPayload) + '\n```',
+    };
+  }
+  return null;
 }
 
 /**
@@ -778,7 +860,7 @@ export function withHintSection(messages: ChatMessage[], call: ToolCallBlock, ph
   let changed = false;
   const out = (messages || []).map((m) => {
     if (changed || m?.role !== 'system') return m;
-    const content = typeof m.content === 'string' ? m.content : '';
+    const content = extractMessageText(m.content);
     if (!content.includes(TOOL_MODE_MARKER)) return m;
     changed = true;
     return { ...m, content: `${content}\n\n${section}` };

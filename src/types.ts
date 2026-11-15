@@ -101,7 +101,7 @@ export interface Config {
   arenaBaseUrl: string;
   headless: boolean;
   /**
-   * Task 14 — phase-aware provider timeouts (ms), all configurable with
+   * phase-aware provider timeouts (ms), all configurable with
    * CONSERVATIVE defaults. `accept` = time for the provider to accept a send
    * (composer submit); `stall` = max silence while awaiting generation output
    * before a GENERATION_STALLED classification; `total` = hard ceiling for a
@@ -153,7 +153,7 @@ export interface Config {
  */
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
+  content: string | any;
   name?: string;
   tool_calls?: unknown[];
   tool_call_id?: string;
@@ -267,7 +267,7 @@ export interface ArenaDriver {
   ): Promise<string>;
   close?(): Promise<void>;
   /**
-   * Task 13 — declared session capabilities (owner locked decisions). A
+   * declared session capabilities . A
    * driver that cannot isolate/restore MUST declare its real pattern; a
    * sessionKey is either used safely or refused loudly — never silently
    * ignored. Optional so non-web drivers are not forced to declare what
@@ -275,7 +275,7 @@ export interface ArenaDriver {
    */
   getCapabilities?(): import('./arena/driver-capabilities.js').DriverCapabilities;
   /**
-   * Task 14 — the durable profile directory this driver runs against (used
+   * the durable profile directory this driver runs against (used
    * as the circuit-breaker key half: providerId + profileDir). Optional so
    * API-only drivers can return undefined; callers fall back to the route
    * name.

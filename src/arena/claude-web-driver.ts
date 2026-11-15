@@ -3,6 +3,7 @@ import type { ArenaDriver, ChatMessage, ClaudeWebConfig } from '../types.js';
 import { cleanupStaleProfileLocks } from '../browser/manager.js';
 import { formatMessages } from './models.js';
 import { DEFAULT_CLAUDE_WEB_BASE_URL } from '../config.js';
+import { providerSessionRouter } from './provider-session-router.js';
 
 const COMPOSER = '[data-testid="chat-input"][contenteditable="true"], div.ProseMirror[contenteditable="true"]';
 const SEND = 'button[data-testid="chat-input-send"], button[aria-label="Send message"]';
@@ -33,7 +34,7 @@ export class ClaudeWebDriver implements ArenaDriver {
   private readonly config: ClaudeWebConfig;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
-  /** Task 13 — declared serialized session lane (single shared page → global serialization). */
+  /** declared serialized session lane (single shared page → global serialization). */
   private readonly sendQueue = new SerializedSessionSendQueue();
 
   constructor(config: ClaudeWebConfig) {
@@ -66,7 +67,7 @@ export class ClaudeWebDriver implements ArenaDriver {
     };
   }
 
-  /** Task 14 — breaker key half: the durable profile this driver runs against. */
+  /** breaker key half: the durable profile this driver runs against. */
   getProfileDir(): string {
     return this.config.userDataDir;
   }
@@ -82,12 +83,22 @@ export class ClaudeWebDriver implements ArenaDriver {
     const page = await this.ensurePage();
     const base = (this.config.baseUrl || DEFAULT_CLAUDE_WEB_BASE_URL).replace(/\/$/, '');
 
-    console.log('[ClaudeWeb] Navigating to claude.ai/new...');
-    await page.goto(`${base}/new`, { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch((e) =>
-      console.log('[ClaudeWeb] goto error:', e.message)
-    );
-    await page.waitForTimeout(2500);
-    await this.assertAuthenticated(page);
+    const shouldRotate = providerSessionRouter.shouldRotate('claude-web');
+    const currentUrl = page.url() || '';
+    const isNew = !currentUrl || currentUrl === 'about:blank' || !currentUrl.includes('claude.ai');
+    if (shouldRotate || isNew) {
+      if (shouldRotate) {
+        providerSessionRouter.rotateSession('claude-web', 'turn_limit_reached');
+      }
+      console.log('[ClaudeWeb] Navigating to claude.ai/new (fresh session)...');
+      await page.goto(`${base}/new`, { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch((e) =>
+        console.log('[ClaudeWeb] goto error:', e.message)
+      );
+      await page.waitForTimeout(2500);
+      await this.assertAuthenticated(page);
+    } else {
+      console.log(`[ClaudeWeb] Continuing active session in existing chat (${currentUrl})...`);
+    }
 
     await this.selectModelIfRequested(page, model, signal);
 
@@ -102,6 +113,7 @@ export class ClaudeWebDriver implements ArenaDriver {
       await this.cleanupPrivacySession(page).catch(() => {});
     }
 
+    providerSessionRouter.recordTurn('claude-web', page.url(), result.length);
     return result;
   }
 
@@ -109,7 +121,7 @@ export class ClaudeWebDriver implements ArenaDriver {
     const url = page.url();
     if (/\/login|\/signup|\/sso/i.test(url)) {
       throw new Error(
-        'claude.ai session is not authenticated (redirected to login). Run: node scripts/login-claude-web.mjs (complete login/hCaptcha, close window), then retry. Profile: ' +
+        'claude.ai session is not authenticated (redirected to login). Run login from the management UI (http://127.0.0.1:8989) or run "npm run login", then retry. Profile: ' +
           this.config.userDataDir
       );
     }

@@ -1,8 +1,5 @@
 /**
- * Per-process browser ownership identity (chat-on-steroids principle: the
- * browser incarnation epoch invalidates every command issued against the
- * previous incarnation — a stale worker can never act on a page from a
- * browser it no longer owns).
+ * Per-process browser ownership identity .
  */
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';

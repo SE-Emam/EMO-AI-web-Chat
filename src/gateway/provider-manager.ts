@@ -48,6 +48,8 @@ import {
   buildRequestHint,
   buildWorkspaceRootCall,
   extractAnnouncedTools,
+  findLocalPath,
+  lastUserText,
   looksLikeToolRefusal,
   repairToolCallArguments,
   withCorrectionSection,
@@ -56,7 +58,8 @@ import {
   type ToolCallBlock,
 } from './agent-tool-bridge.js';
 import { buildContinuationBlock, buildEnvironmentBlock } from './agent-instructions.js';
-import { parseToolCallsFromResponse } from '../server/tool-interpreter.js';
+import { parseToolCallsFromResponse, injectToolsInstruction } from '../server/tool-interpreter.js';
+import { WORKSPACE_TOOLS } from '../server/workspace-tools.js';
 
 type Factory = (cfg: ProviderConfig) => ArenaDriver | Promise<ArenaDriver>;
 
@@ -1472,9 +1475,21 @@ export class ProviderManager {
       //     path and a matching tool is announced;
       //  3. a prose answer that looks like a refusal is repaired with one
       //     corrective turn in the same web chat.
-      const announced = extractAnnouncedTools(messages);
+      let announced = extractAnnouncedTools(messages);
       const roots = this.workspaceRoots();
       let prepared = messages;
+      if (!announced.length) {
+        const userText = lastUserText(messages);
+        const hasLocalPath = Boolean(findLocalPath(userText));
+        if (hasLocalPath) {
+          const workspaceToolDefs = WORKSPACE_TOOLS.map((t) => ({
+            type: 'function',
+            function: { name: t.name, description: t.description, parameters: t.parameters },
+          }));
+          prepared = injectToolsInstruction(messages, workspaceToolDefs, 'auto');
+          announced = extractAnnouncedTools(prepared);
+        }
+      }
       if (announced.length) {
         // The environment facts are opt-in: measured against the live web
         // model, the extra text made it answer with prose instead of the

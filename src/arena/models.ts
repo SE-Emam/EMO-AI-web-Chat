@@ -202,24 +202,54 @@ export function resolveModelAlias(model: string): string {
  * Formats ChatMessage array into a single cohesive conversational prompt string.
  * Preserves tool-calling turns so web models can see tool invocations and results.
  */
+export function extractMessageText(rawContent: unknown): string {
+  if (typeof rawContent === "string") return rawContent.trim();
+  if (rawContent == null) return "";
+  if (Array.isArray(rawContent)) {
+    return rawContent
+      .map((p: any) => {
+        if (typeof p === "string") return p;
+        if (p && typeof p === "object") {
+          if (typeof p.text === "string") return p.text;
+          if (p.type === "text" && typeof p.text === "string") return p.text;
+          if (typeof p.content === "string") return p.content;
+        }
+        try { return JSON.stringify(p); } catch { return ""; }
+      })
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+  }
+  if (typeof rawContent === "object") {
+    const obj = rawContent as any;
+    if (typeof obj.text === "string") return obj.text.trim();
+    if (typeof obj.content === "string") return obj.content.trim();
+    try { return JSON.stringify(rawContent).trim(); } catch { return ""; }
+  }
+  return String(rawContent).trim();
+}
+
+/**
+ * Formats ChatMessage array into a single cohesive conversational prompt string.
+ * Preserves tool-calling turns so web models can see tool invocations and results.
+ */
 export function formatMessages(messages: ChatMessage[]): string {
   if (!messages || messages.length === 0) {
-    return '';
+    return "";
   }
 
-  const hasTooling = messages.some((m) => m.role === 'tool' || (Array.isArray((m as any).tool_calls) && (m as any).tool_calls.length > 0));
-  if (!hasTooling && messages.length === 1 && messages[0].role === 'user') {
-    const raw = (messages[0] as any).content;
-    return typeof raw === 'string' ? raw : String(raw ?? '');
+  const hasTooling = messages.some((m) => m.role === "tool" || (Array.isArray((m as any).tool_calls) && (m as any).tool_calls.length > 0));
+  if (!hasTooling && messages.length === 1 && messages[0].role === "user") {
+    return extractMessageText((messages[0] as any).content);
   }
 
   const toolNameById = new Map<string, string>();
   for (const msg of messages) {
     const calls = (msg as any).tool_calls;
-    if (msg.role === 'assistant' && Array.isArray(calls)) {
+    if (msg.role === "assistant" && Array.isArray(calls)) {
       for (const tc of calls) {
-        const id = String(tc?.id || '');
-        const name = String(tc?.function?.name || tc?.name || 'tool');
+        const id = String(tc?.id || "");
+        const name = String(tc?.function?.name || tc?.name || "tool");
         if (id) toolNameById.set(id, name);
       }
     }
@@ -227,23 +257,7 @@ export function formatMessages(messages: ChatMessage[]): string {
 
   const parts: string[] = [];
   for (const msg of messages) {
-    const rawContent = (msg as any).content;
-    let content = '';
-    if (typeof rawContent === 'string') content = rawContent.trim();
-    else if (rawContent == null) content = '';
-    else if (Array.isArray(rawContent)) {
-      content = rawContent.map((p: any) => {
-        if (typeof p === 'string') return p;
-        if (p && typeof p === 'object') {
-          if (typeof p.text === 'string') return p.text;
-          if (p.type === 'text' && typeof p.text === 'string') return p.text;
-          if (typeof p.content === 'string') return p.content;
-        }
-        try { return JSON.stringify(p); } catch { return String(p); }
-      }).join('\n').trim();
-    } else {
-      try { content = JSON.stringify(rawContent).trim(); } catch { content = String(rawContent).trim(); }
-    }
+    const content = extractMessageText((msg as any).content);
 
     if (msg.role === 'system') {
       if (content) parts.push(`System: ${content}`);

@@ -1,7 +1,7 @@
 /**
  * Cross-process mutual exclusion via O_EXCL lock files.
  *
- * chat-on-steroids principle (browser-control.ts): a claim is exclusive by
+ * core principle (browser-control.ts): a claim is exclusive by
  * construction, and a dead owner's claim can be taken over — a live owner's
  * can never be. `open(path, 'wx')` fails with EEXIST when ANY process already
  * holds the lock, which is the only primitive the OS guarantees atomically
@@ -116,7 +116,7 @@ export class ProcessLock {
       release: () => {
         if (released) return;
         released = true;
-        // Task 10 (final-audit finding): a lock file may only be deleted when
+        // : a lock file may only be deleted when
         // its contents PROVE we still own it. Unreadable/corrupt contents, or
         // a different ownerInstanceId, mean someone else may hold (or have
         // re-created) this lock — deleting it could let two processes believe

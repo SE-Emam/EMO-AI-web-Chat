@@ -48,7 +48,7 @@ export interface ModelDiscoveryOutcome {
   autoSelected?: boolean;
   /** Secret-free failure reason. */
   error?: string;
-  /** Central Task 14 failure code when the discovery failed. */
+  /** Central failure code when the discovery failed. */
   failureCode?: ProviderFailureCode;
 }
 

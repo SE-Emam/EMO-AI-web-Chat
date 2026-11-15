@@ -242,7 +242,7 @@ export function createCli(services: CliServices = {}): Command {
       }
       routes.push({ name: 'arena-browser', driver: arenaDriver, matches: (m) => matchesProvider('arena-browser', m) });
 
-      // Task 14 — provider resilience wiring: per-(route,profileDir) circuit
+      // provider resilience wiring: per-(route,profileDir) circuit
       // breakers over ONE durable store (shared across gateway processes) and
       // the process-local last-failure/success registry for /health. The
       // state file is only WRITTEN when countable failures occur — reads
