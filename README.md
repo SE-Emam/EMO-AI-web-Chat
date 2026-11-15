@@ -1,122 +1,194 @@
 # EMO-AI-web
 
-A high-performance local web-to-API gateway, agent bridge, and Model Context Protocol (MCP) tunnel server.
+A high-performance local web-to-API gateway, multi-provider router, agent bridge, and Model Context Protocol (MCP) tunnel server.
 
-EMO-AI-web connects web AI interfaces (Claude, Gemini, Qwen, Tencent AI Studio, Z.AI / GLM, and EMO.ai) into standard local OpenAI-compatible endpoints (`/v1/chat/completions` with streaming SSE and `/v1/models`), accompanied by a local browser management UI.
+EMO-AI-web converts web AI chat interfaces (ChatGPT, Claude, Gemini, DeepSeek, Qwen, Grok, Kimi, MiniMax, EMO.ai, and more) into standard local OpenAI-compatible endpoints (`/v1/chat/completions` with streaming SSE and `/v1/models`), backed by an intuitive browser management dashboard.
 
 ---
 
-## Features
+## Key Highlights
 
-- **OpenAI-Compatible API**: Implements `/v1/chat/completions` (streaming SSE and non-streaming) and `/v1/models`.
-- **Integrated MCP Tunnel Server**: Built-in reverse tunnel manager to expose the local MCP endpoint (`/mcp`) to ChatGPT and OpenAI Platform Organization Tunnels, Cloudflare Quick Tunnels, or Ngrok.
-- **Provider Session Router**: Enforces a strict single active session per provider to prevent duplicate browser tabs, with automatic rotation when turn thresholds are reached.
+- **Standard OpenAI API Compatibility**: Drop-in replacement for OpenAI API (`/v1/chat/completions`, `/v1/models`) supporting streaming SSE and non-streaming modes.
+- **15+ Supported Web Providers**: Seamless integration with premier web AI platforms without requiring paid API credits.
+- **Multi-Account Management**: Add, manage, and isolate multiple accounts per provider with separate browser profiles.
+- **Intelligent Router Groups**: Create virtual model clusters with automatic **Sequential Failover** or **Round-Robin Load Balancing** across models and accounts.
+- **Autonomous Agent Swarm Coordinator**: Decomposes complex engineering goals across 4 specialized parallel subagents (`architect`, `coder`, `reviewer`, `tester`) with final deliverable synthesis.
+- **Provider Session Router**: Enforces single active session per provider, eliminating tab duplication and rotating conversations cleanly upon reaching turn limits.
 - **Agent Tool Bridge**: Native function calling (`tools`) support for web models, returning standard OpenAI `tool_calls` to Cursor, Cline, Roo-Code, and Copilot.
-- **Local Management UI**: Visual dashboard at `http://127.0.0.1:8989` to manage providers, toggle models, inspect sessions, and monitor usage.
-- **Persistent Browser Profiles**: Stores authentication tokens and cookies locally in `~/.arena-webbridge/` so logins persist across sessions.
-- **Multi-Agent Swarm Coordinator**: Decomposes high-level coding goals into specialized subagent workflows.
+- **Embedded MCP Reverse Tunnel Server**: Exposes local machine tools and files to ChatGPT via OpenAI Organization Tunnels, Cloudflare Quick Tunnels, or Ngrok.
+- **100% Local Privacy**: Runs entirely on `127.0.0.1` — your prompts, credentials, and cookies never leave your machine.
 
 ---
 
-## Requirements
+## Architecture: How It Works
 
-- **Node.js**: v20.0.0 or later
-- **Google Chrome** or Playwright Chromium installed locally
+```
+┌────────────────────────────────────────────────────────┐
+│  Clients: Cursor / Cline / Roo-Code / Copilot / Python │
+└───────────────────────────┬────────────────────────────┘
+                            │ Standard OpenAI Request (/v1)
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│                   EMO-AI-web Gateway                   │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │   Intelligent Router Groups (Failover / RR)      │  │
+│  └────────────────────────┬─────────────────────────┘  │
+│                           │                            │
+│  ┌────────────────────────▼─────────────────────────┐  │
+│  │     Provider Session Router & Multi-Account      │  │
+│  │   - Single active session per provider           │  │
+│  │   - Isolated profile directories per account     │  │
+│  │   - Auto turn rotation & context compaction      │  │
+│  └────────────────────────┬─────────────────────────┘  │
+│                           │                            │
+│  ┌────────────────────────▼─────────────────────────┐  │
+│  │       Playwright Persistent Browser Context      │  │
+│  │  - Headless execution with saved session cookies │  │
+│  │  - Native Tool Calling Bridge & Token Extraction │  │
+│  └────────────────────────┬─────────────────────────┘  │
+│                           │                            │
+│  ┌────────────────────────▼─────────────────────────┐  │
+│  │       Embedded MCP Tunnel Manager (Port 8989)    │  │
+│  │  - OpenAI Platform Org Tunnels (Native Poller)   │  │
+│  │  - Cloudflare Quick Tunnel (Free HTTPS Endpoint) │  │
+│  └──────────────────────────────────────────────────┘  │
+└───────────────────────────┬────────────────────────────┘
+                            │ Authenticated Web Automation
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│ Web Providers: ChatGPT / Claude / Gemini / DeepSeek... │
+└────────────────────────────────────────────────────────┘
+```
+
+1. **Client Request**: Your coding assistant or client sends a standard `/v1/chat/completions` payload to `http://127.0.0.1:8989/v1`.
+2. **Router Group & Model Resolution**: If a virtual group or model prefix is requested, the router chooses the target provider, model, and account based on the configured strategy (Sequential or Round-Robin).
+3. **Session Routing**: The `ProviderSessionRouter` routes the prompt into the active conversation tab for that provider, preventing runaway tab spawns.
+4. **Browser Automation**: Playwright drives the authenticated web session headlessly using cookies saved in `~/.arena-webbridge/`.
+5. **Real-time SSE Streaming**: Tokens are scraped as they are generated and streamed back to the client via Server-Sent Events (`text/event-stream`).
+6. **Agent Tool Bridge**: When tools are provided in the request, the bridge injects OpenAPI schema instructions and translates model JSON outputs into official OpenAI `tool_calls`.
 
 ---
 
-## Installation
+## Supported Web Providers
 
-```bash
-# Clone the repository
-git clone https://github.com/SE-Emam/EMO-AI-web-Chat.git
-cd EMO-AI-web-Chat
+EMO-AI-web supports 15 web AI platforms out of the box:
 
-# Install dependencies
-npm install
+| Provider | Model Prefix(es) | Platform URL | Description & Default Models |
+|---|---|---|---|
+| **ChatGPT Web** | `chatgpt:*`, `chatgpt:`, `gpt:*` | `https://chatgpt.com` | Official ChatGPT web session (`gpt-4o`, `o1`, `o3-mini`) |
+| **Claude Web** | `claude-web:*`, `claudeai:*` | `https://claude.ai` | Claude 3.7 Sonnet (Thinking mode), Claude 3.5 Sonnet |
+| **Gemini Web** | `gemini-web:*`, `geminiweb:*` | `https://gemini.google.com` | Google Gemini 2.0 Flash, Gemini 1.5 Pro |
+| **DeepSeek Web** | `deepseek-web:*`, `deepseek:*` | `https://chat.deepseek.com` | DeepSeek-R1 (Full Reasoning), DeepSeek-V3 |
+| **Qwen Web** | `qwen-web:*`, `qwenweb:*` | `https://chat.qwen.ai` | Qwen 2.5 Max, Qwen 2.5 Coder 32B |
+| **Grok Web** | `grok-web:*`, `grok:*` | `https://grok.com` | Grok 2, Grok 3 reasoning |
+| **Kimi Web** | `kimi-web:*`, `moonshot:*` | `https://www.kimi.com` | Moonshot Kimi 1.5 long-context reasoning |
+| **MiniMax Web** | `minimax-web:*`, `hailuo:*` | `https://agent.minimax.io` | MiniMax Hailuo AI agent web chat |
+| **Z.AI Web / GLM**| `zai-web:*`, `glm-*` | `https://chat.z.ai` | Zhipu GLM-5, GLM-4.7, GLM-4.5 Flash |
+| **EMO Web** | Default fallback | `https://emo.ai` | Direct multi-model evaluation and battle chat |
+| **Tencent AI** | `tencent-ai:*`, `tencentai:*` | `https://aistudio.tencent.ai/` | Tencent Hunyuan and AI Studio web chat |
+| **Mistral Web** | `mistral-web:*`, `lechat:*` | `https://chat.mistral.ai` | Mistral Large, Le Chat platform |
+| **LongCat Web** | `longcat-web:*`, `longcat:*` | `https://longcat.ai/chat/` | LongCat AI aggregation chat |
+| **LLM7 Web** | `llm7-web:*`, `llm7:*` | `https://llm7.chat` | Multi-LLM web platform |
+| **LLM Kiwi Web** | `kiwi-web:*`, `kiwi:*` | `https://chat.llm.kiwi` | Kiwi AI chat interface |
 
-# Build TypeScript to JavaScript
-npm run build
-```
-
----
-
-## Quick Start
-
-### 1. Start the Gateway & Management UI
-
-```bash
-npm run emo
-```
-
-This launches the server on `http://127.0.0.1:8989` and opens the management dashboard in your default browser.
-
-To start without opening the browser automatically:
-
-```bash
-npm start
-```
-
-### 2. Authenticate Providers (Login)
-
-Before sending requests to a web provider, authenticate its browser profile once:
-
-- **Via Management UI**: Navigate to `http://127.0.0.1:8989`, find the provider card (Claude, Gemini, Qwen, EMO.ai, etc.), and click **Login**. A browser window opens for you to complete sign-in.
-- **Via CLI**:
-  ```bash
-  npm run login
-  ```
-  Or specify a custom provider URL:
-  ```bash
-  npx emo-ai-web login --url https://emo.ai
-  ```
-
-Cookies and session tokens are saved to `~/.arena-webbridge/` and reused automatically.
-
-Verify your profile status at any time:
-
-```bash
-npx emo-ai-web status
-```
+*Note: You can also route to direct REST APIs (e.g., Z.AI REST API via `ZAI_API_KEY`) alongside web sessions.*
 
 ---
 
-## Connecting AI Coding Agents
+## Multi-Account Management
 
-EMO-AI-web acts as a drop-in OpenAI-compatible backend for tools like Cursor, Cline, Roo-Code, and Copilot.
+EMO-AI-web allows you to link multiple accounts to each web provider:
 
-### Cursor / Cline / Roo-Code Configuration
+- **Isolated Browser Profiles**: Each added account receives its own dedicated profile directory (`~/.arena-webbridge/<provider>-profile-<accId>`), guaranteeing session isolation.
+- **Active Account Selection**: Switch the active account with one click in the Web UI or via API.
+- **Failover & Rotation**: If one account hits a daily usage limit or rate limit, the router automatically fails over to other authenticated accounts.
+- **Quick Authentication**: Log into each account independently through the interactive headful browser launcher.
 
-- **API Base URL**: `http://127.0.0.1:8989/v1`
-- **API Key**: `sk-local` (or any non-empty string)
-- **Model**: Select any available model (e.g. `claude-3-7-sonnet`, `gpt-4o`, `deepseek-r1`, `gemini-2.0-flash`, `qwen-2.5-max`)
+---
 
-### cURL Example
+## Intelligent Router Groups
+
+Router Groups allow you to define virtual composite models combining multiple providers, models, and accounts under a single name (e.g., `fast-code`, `heavy-reasoning`, `free-tier`):
+
+### Routing Strategies
+
+1. **Sequential Failover (`sequential`)**:
+   - Tries targets in order of priority.
+   - If Target 1 fails (rate limit, captcha, network error), the gateway immediately fails over to Target 2 without dropping the client connection.
+2. **Round-Robin Load Balancing (`round-robin`)**:
+   - Distributes requests evenly across targets.
+   - Ideal for balancing load across multiple free accounts or distributing high-volume requests.
+
+### Using Router Groups
+
+Once created in the Management UI (`http://127.0.0.1:8989`), router groups behave like standard models:
 
 ```bash
+# Call a custom router group named "heavy-reasoning"
 curl -X POST http://127.0.0.1:8989/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "claude-3-7-sonnet",
+    "model": "heavy-reasoning",
     "stream": true,
     "messages": [
-      {"role": "user", "content": "Explain binary search trees concisely."}
+      {"role": "user", "content": "Analyze time complexity of distributed consensus."}
     ]
   }'
 ```
 
 ---
 
+## Autonomous Agent Swarm Coordinator
+
+EMO-AI-web includes an integrated multi-agent swarm engine that autonomously orchestrates complex software engineering tasks:
+
+### Specialized Worker Roles
+
+1. **Coordinator (`coordinator`)**: Analyzes the high-level goal, decomposes it into discrete technical slices, coordinates workers, and synthesizes final unified deliverables.
+2. **Architect (`architect`)**: Designs system blueprints, data schemas, API contracts, and computational boundaries (routed to `deepseek-r1`, `o1`, or `claude-3-7-sonnet`).
+3. **Coder (`coder`)**: Writes complete, production-grade, fully-typed code with clean error handling and zero omissions (routed to `claude-3-7-sonnet`, `gpt-4o`, or `qwen-2.5-max`).
+4. **Reviewer (`reviewer`)**: Conducts rigorous security, race-condition, vulnerability, and performance audits.
+5. **Tester (`tester`)**: Authors comprehensive unit, boundary, and integration test suites (routed to `gemini-2.0-flash` or `claude-3-5-haiku`).
+
+### Execution Modes
+
+- `auto`: Dynamic task decomposition, parallel execution, and automated synthesis (default).
+- `pipeline`: Sequential stage-by-stage progression (`architect` → `coder` → `reviewer` → `tester`).
+- `parallel`: All subagents explore the objective concurrently from their domain perspectives before final synthesis.
+
+### Invoking Swarm
+
+```bash
+# 1. Via CLI
+npm run swarm "Build a distributed rate-limiter with Redis"
+
+# Or with specific mode
+npx emo-ai-web swarm "Audit repository architecture" --mode parallel
+
+# 2. Via OpenAI API (/v1/chat/completions)
+curl -X POST http://127.0.0.1:8989/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "swarm:auto",
+    "stream": true,
+    "messages": [{"role": "user", "content": "Refactor authentication flow to JWT with refresh tokens"}]
+  }'
+
+# 3. Via Web UI: Open http://127.0.0.1:8989 and switch to the Swarm Dashboard tab.
+```
+
+---
+
 ## MCP Tunnel Server (Connecting ChatGPT to Local Machine)
 
-EMO-AI-web includes an embedded MCP reverse tunnel manager that connects local machine tools and files to ChatGPT.
+Expose your local Model Context Protocol (MCP) server (`http://127.0.0.1:8989/mcp`) so ChatGPT can read, edit, and run local workspace files safely.
 
 ### Supported Tunnel Providers
 
 1. **OpenAI Organization Tunnels**:
-   - Configurable at [OpenAI Platform Tunnels](https://platform.openai.com/settings/organization/tunnels).
-   - Uses a native in-memory long-poll worker inside the gateway (no external binaries or downloads required).
-   - Enter your `Tunnel ID` and `API Key` in the Management UI under MCP settings, or via API:
+   - Native integration with [OpenAI Platform Tunnels](https://platform.openai.com/settings/organization/tunnels).
+   - Driven by an **in-memory long-poll worker** (zero external binaries or downloads required).
+   - Enter your `Tunnel ID` and `API Key` in the UI or start via API:
      ```bash
      curl -X POST http://127.0.0.1:8989/api/tunnel/start \
        -H "Content-Type: application/json" \
@@ -128,70 +200,122 @@ EMO-AI-web includes an embedded MCP reverse tunnel manager that connects local m
      ```
 
 2. **Cloudflare Quick Tunnel**:
-   - Zero-config HTTPS tunnel (`*.trycloudflare.com`).
-   - Requires no API key or account registration.
-   - Start directly from the UI or via API:
-     ```bash
-     curl -X POST http://127.0.0.1:8989/api/tunnel/start \
-       -H "Content-Type: application/json" \
-       -d '{"provider": "cloudflared"}'
-     ```
-
-3. **Ngrok Tunnel**:
-   - Supports custom ngrok authentication tokens and domains.
+   - Zero-configuration HTTPS tunnel (`*.trycloudflare.com`).
+   - Requires no account or token — launches instantly with one click in the Web UI.
 
 ---
 
-## Provider Session Router
+## Installation & Setup
 
-To prevent excessive tab creation and token exhaustion during continuous conversations:
+### Prerequisites
 
-- **Single Active Session**: Routes sequential requests for a provider through a single active browser conversation tab.
-- **Turn Rotation**: Automatically rotates to a fresh conversation when the turn threshold (default: 20 turns) is reached.
-- **Clean Teardown**: Closes previous tabs safely without leaving orphaned browser processes.
+- **Node.js**: v20.0.0 or later
+- **Google Chrome** or Playwright Chromium installed locally
 
----
-
-## Multi-Agent Swarm Coordinator
-
-Execute complex development goals with coordinated specialized subagents:
+### Installation
 
 ```bash
-# Run swarm via CLI
-npm run swarm "Design and implement rate-limiting middleware"
+# Clone the repository
+git clone https://github.com/SE-Emam/EMO-AI-web-Chat.git
+cd EMO-AI-web-Chat
 
-# Or with specific mode (auto, pipeline, parallel)
-npx emo-ai-web swarm "Audit system performance" --mode parallel
+# Install dependencies
+npm install
+
+# Build TypeScript
+npm run build
+```
+
+---
+
+## Quick Start
+
+### 1. Launch Gateway & Dashboard
+
+```bash
+npm run emo
+```
+
+Starts the server on port `8989` and automatically opens the Management UI in your browser (`http://127.0.0.1:8989`).
+
+To run headlessly in the background:
+
+```bash
+npm start
+```
+
+### 2. Authenticate Providers (One-Time Login)
+
+- **Via Web UI (Recommended)**: On `http://127.0.0.1:8989`, click the **Login** button next to any provider. Solve any Cloudflare challenge or sign in once.
+- **Via CLI**:
+  ```bash
+  npm run login
+  # Or target a specific provider:
+  npx emo-ai-web login --url https://claude.ai
+  ```
+
+Cookies and tokens are saved locally in `~/.arena-webbridge/` and reused automatically.
+
+Verify your authentication status:
+
+```bash
+npx emo-ai-web status
+```
+
+---
+
+## Connecting AI Coding Agents
+
+EMO-AI-web works as a drop-in replacement for OpenAI API in your favorite coding tools:
+
+### Configuration for Cursor / Cline / Roo-Code
+
+- **API Base URL**: `http://127.0.0.1:8989/v1`
+- **API Key**: `sk-local` (or any string)
+- **Model**: Any supported prefix or router group (e.g. `claude-web:claude-3-7-sonnet`, `deepseek-web:deepseek-r1`, `chatgpt-web:gpt-4o`, `heavy-reasoning`)
+
+### cURL Example
+
+```bash
+curl -X POST http://127.0.0.1:8989/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek-web:deepseek-r1",
+    "stream": true,
+    "messages": [
+      {"role": "user", "content": "Explain raft consensus in simple terms."}
+    ]
+  }'
 ```
 
 ---
 
 ## Configuration Reference
 
-Settings can be customized via `.env` or environment variables:
+Settings can be set via `.env` or environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` / `ARENA_PORT` | `8989` | HTTP server listening port |
-| `HOST` | `127.0.0.1` | Network binding host |
-| `USER_DATA_DIR` | `~/.arena-webbridge/chrome-profile` | Persistent browser profile path |
-| `HEADLESS` | `true` | Run browser in headless mode |
+| `PORT` / `ARENA_PORT` | `8989` | HTTP API server port |
+| `HOST` | `127.0.0.1` | Network binding interface |
+| `USER_DATA_DIR` | `~/.arena-webbridge/chrome-profile` | Chrome user data directory |
+| `HEADLESS` | `true` | Run browser automation headlessly |
 | `CLAUDE_WEB_ENABLED` | `false` | Enable Claude web provider |
 | `GEMINI_WEB_ENABLED` | `false` | Enable Gemini web provider |
 | `QWEN_WEB_ENABLED` | `false` | Enable Qwen web provider |
-| `ZAI_API_KEY` | _(empty)_ | Optional Z.AI direct API key |
 | `ZAI_WEB_ENABLED` | `false` | Enable Z.AI web chat provider |
-| `TENCENT_AI_WEB_ENABLED` | `false` | Enable Tencent AI Studio web provider |
+| `ZAI_API_KEY` | _(empty)_ | Optional direct Z.AI REST API key |
+| `TENCENT_AI_WEB_ENABLED` | `false` | Enable Tencent AI Studio provider |
 
 ---
 
-## CLI Commands
+## CLI Reference
 
 | Command | Description |
 |---------|-------------|
 | `npm run emo` | Start gateway and launch browser management UI |
-| `npm start` | Start gateway in headless server mode |
-| `npm run login` | Launch interactive browser to authenticate sessions |
+| `npm start` | Start gateway in background / headless mode |
+| `npm run login` | Open interactive browser for session authentication |
 | `npm run build` | Compile TypeScript into `dist/` |
 | `npm run typecheck` | Run TypeScript type checks without emitting files |
 | `npm run swarm [goal]` | Launch autonomous subagent swarm coordinator |
