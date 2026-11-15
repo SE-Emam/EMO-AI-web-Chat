@@ -1,5 +1,5 @@
 /**
- * DOM selectors for arena.ai direct chat (Gradio / Next.js UI).
+ * DOM selectors for emo.ai direct chat (Gradio / Next.js UI).
  */
 export const ARENA_SELECTORS = {
   directChatTab: [

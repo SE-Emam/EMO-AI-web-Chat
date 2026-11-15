@@ -281,7 +281,7 @@ export const DISCOVERY_ADAPTERS: Record<WebProviderId, WebModelDiscoveryAdapter>
 
   'arena-browser': {
     providerId: 'arena-browser',
-    entryUrl: 'https://arena.ai/text/direct',
+    entryUrl: 'https://emo.ai/text/direct',
     strategies: ['dom'],
     verified: true,
     dom: {

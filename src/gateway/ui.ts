@@ -3290,7 +3290,7 @@ img.brand-logo{
     <div class="form-group">
       <label data-i18n="labelSelectProvider">المزود المستهدف</label>
       <select id="selModalProvider" class="form-input">
-        <option value="arena-browser">Arena Web</option>
+        <option value="arena-browser">EMO Web</option>
         <option value="claude-web">Claude Web</option>
         <option value="gemini-web">Gemini Web</option>
         <option value="qwen-web">Qwen Web</option>

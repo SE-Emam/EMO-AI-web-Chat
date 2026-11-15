@@ -125,15 +125,15 @@ export function createCli(services: CliServices = {}): Command {
   }
 
   program
-    .name('webbridge')
-    .description('OpenAI-compatible Web-to-API bridge for Arena (arena.ai)')
+    .name('emo-ai-web')
+    .description('OpenAI-compatible Web-to-API gateway for EMO-AI (emo.ai)')
     .version('0.1.0');
 
   // Command: login
   program
     .command('login')
-    .description('Open interactive browser for Arena login and Cloudflare verification')
-    .option('--url <url>', 'Arena URL to navigate to for login')
+    .description('Open interactive browser for EMO.ai login and verification')
+    .option('--url <url>', 'EMO.ai URL to navigate to for login')
     .option('--user-data-dir <dir>', 'Persistent browser profile directory')
     .action(async (options) => {
       const configOverrides: Partial<Config> = {};

@@ -2,7 +2,7 @@
 
 A high-performance local web-to-API gateway, agent bridge, and Model Context Protocol (MCP) tunnel server.
 
-EMO-AI-web connects web AI interfaces (Claude, Gemini, Qwen, Tencent AI Studio, Z.AI / GLM, and Arena) into standard local OpenAI-compatible endpoints (`/v1/chat/completions` with streaming SSE and `/v1/models`), accompanied by a local browser management UI.
+EMO-AI-web connects web AI interfaces (Claude, Gemini, Qwen, Tencent AI Studio, Z.AI / GLM, and EMO.ai) into standard local OpenAI-compatible endpoints (`/v1/chat/completions` with streaming SSE and `/v1/models`), accompanied by a local browser management UI.
 
 ---
 
@@ -61,14 +61,14 @@ npm start
 
 Before sending requests to a web provider, authenticate its browser profile once:
 
-- **Via Management UI**: Navigate to `http://127.0.0.1:8989`, find the provider card (Claude, Gemini, Qwen, Arena, etc.), and click **Login**. A browser window opens for you to complete sign-in.
+- **Via Management UI**: Navigate to `http://127.0.0.1:8989`, find the provider card (Claude, Gemini, Qwen, EMO.ai, etc.), and click **Login**. A browser window opens for you to complete sign-in.
 - **Via CLI**:
   ```bash
   npm run login
   ```
   Or specify a custom provider URL:
   ```bash
-  npx webbridge login --url https://arena.ai
+  npx emo-ai-web login --url https://emo.ai
   ```
 
 Cookies and session tokens are saved to `~/.arena-webbridge/` and reused automatically.
@@ -76,7 +76,7 @@ Cookies and session tokens are saved to `~/.arena-webbridge/` and reused automat
 Verify your profile status at any time:
 
 ```bash
-npx webbridge status
+npx emo-ai-web status
 ```
 
 ---
@@ -161,7 +161,7 @@ Execute complex development goals with coordinated specialized subagents:
 npm run swarm "Design and implement rate-limiting middleware"
 
 # Or with specific mode (auto, pipeline, parallel)
-npx webbridge swarm "Audit system performance" --mode parallel
+npx emo-ai-web swarm "Audit system performance" --mode parallel
 ```
 
 ---
@@ -195,8 +195,8 @@ Settings can be customized via `.env` or environment variables:
 | `npm run build` | Compile TypeScript into `dist/` |
 | `npm run typecheck` | Run TypeScript type checks without emitting files |
 | `npm run swarm [goal]` | Launch autonomous subagent swarm coordinator |
-| `npx webbridge status` | Display profile and authentication status |
-| `npx webbridge models` | List all discovered and supported models |
+| `npx emo-ai-web status` | Display profile and authentication status |
+| `npx emo-ai-web models` | List all discovered and supported models |
 
 ---
 

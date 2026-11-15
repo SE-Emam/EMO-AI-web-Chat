@@ -12,7 +12,7 @@ import {
 } from './models.js';
 
 /**
- * Playwright-based driver for automating conversations on arena.ai direct chat.
+ * Playwright-based driver for automating conversations on emo.ai direct chat.
  */
 export class DefaultArenaDriver implements ArenaDriver {
   private browserManager: BrowserManager;

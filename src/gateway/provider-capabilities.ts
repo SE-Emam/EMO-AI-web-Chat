@@ -233,7 +233,7 @@ const WEB_PROVIDER_CAPABILITIES: Record<WebProviderId, Omit<ProviderCapabilities
 };
 
 const NAMES: Record<WebProviderId, string> = {
-  'arena-browser': 'Arena Web',
+  'arena-browser': 'EMO Web',
   'zai-web': 'ZAI Web',
   'claude-web': 'Claude Web',
   'tencent-ai-web': 'Tencent web',

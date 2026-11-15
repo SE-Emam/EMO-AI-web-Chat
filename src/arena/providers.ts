@@ -28,7 +28,7 @@ export interface ProviderSpec {
 }
 
 export const WEB_PROVIDERS: readonly ProviderSpec[] = [
-  { id: 'arena-browser', name: 'Arena Web', prefixes: [], defaultBaseUrl: 'https://arena.ai', defaultTimeoutMs: 300_000, profileDir: 'chrome-profile' },
+  { id: 'arena-browser', name: 'EMO Web', prefixes: [], defaultBaseUrl: 'https://emo.ai', defaultTimeoutMs: 300_000, profileDir: 'chrome-profile' },
   { id: 'zai-web', name: 'ZAI Web', prefixes: ['zai-web:'], defaultBaseUrl: 'https://chat.z.ai', defaultTimeoutMs: 180_000, profileDir: 'zai-profile', defaultCaptchaWaitMs: 180_000, alsoMatches: (m) => m.startsWith('glm-') },
   { id: 'claude-web', name: 'Claude Web', prefixes: ['claude-web:', 'claudeai:'], defaultBaseUrl: 'https://claude.ai', defaultTimeoutMs: 300_000, profileDir: 'claude-profile' },
   { id: 'tencent-ai-web', name: 'Tencent web', prefixes: ['tencent-ai:', 'tencentai:'], defaultBaseUrl: 'https://aistudio.tencent.ai/', defaultTimeoutMs: 300_000, profileDir: 'tencent-aistudio-profile' },
