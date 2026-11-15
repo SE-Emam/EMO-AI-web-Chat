@@ -17,7 +17,8 @@
     "start": "tsx src/cli.ts serve",
     "login": "tsx src/cli.ts login",
     "emo": "tsx src/emo-ai.ts",
-    "swarm": "tsx src/cli.ts swarm"
+    "swarm": "tsx src/cli.ts swarm",
+    "test": "node --import tsx --test 'tests/**/*.test.ts'"
   },
   "keywords": [
     "arena",

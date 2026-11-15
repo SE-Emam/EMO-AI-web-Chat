@@ -338,7 +338,7 @@ export function createCli(services: CliServices = {}): Command {
         `Session Data:      ${
           status.hasSessionData
             ? 'Found (authenticated / active session)'
-            : 'Not found (run "webbridge login" first)'
+            : 'Not found (run "emo-ai-web login" first)'
         }`
       );
       if (status.details) {

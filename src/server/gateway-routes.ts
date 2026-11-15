@@ -1,4 +1,5 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { globalHumanSessionManager, type HumanSession } from './human-session.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -10,6 +11,7 @@ import { isValidApiKey } from '../gateway/security.js';
 import { registerMcpServer } from './mcp-server.js';
 import { mcpTunnelServer } from './mcp-tunnel-server.js';
 import { configureMcpServers, mcpTargets } from '../gateway/mcp-auto-config.js';
+import { globalApprovalManager } from './approval-manager.js';
 
 function isProviderId(v: string): v is WebProviderId {
   return (WEB_PROVIDER_IDS as string[]).includes(v);
@@ -583,7 +585,7 @@ export async function autoConfigureAgent(
   agentId: string,
   manager: ProviderManager,
   port = 8989,
-  apiKey = 'emo.web',
+  apiKey = '',
   home: string = os.homedir()
 ): Promise<{
   success: boolean;
@@ -1358,6 +1360,7 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
   // that URL real — without it every agent tool call failed with a broken
   // workspace connection.
   registerMcpServer(app, {
+    resolveKeyAuth: (key) => opts.manager.resolveKeyAuth(key),
     isValidApiKey: (key) => isValidApiKey(key, opts.manager.getValidApiKeys()),
     apiKey: opts.getGatewayConfig().gateway.apiKey,
     // Read LIVE so a change of the workspace root applies immediately.
@@ -1625,7 +1628,7 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
     const { id } = req.params as { id: string };
     const cfg = opts.getGatewayConfig();
     const port = cfg.gateway.port || 8989;
-    const apiKey = cfg.gateway.apiKey || 'emo.web';
+    const apiKey = cfg.gateway.apiKey || '';
     try {
       // Honest guard: never bind an agent that is not actually installed.
       const agents = await detectLocalAgents(opts.manager, true);
@@ -1745,7 +1748,7 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
     const body = (req.body || {}) as { agentIds?: unknown };
     const cfg = opts.getGatewayConfig();
     const port = cfg.gateway.port || 8989;
-    const apiKey = cfg.gateway.apiKey || 'emo.web';
+    const apiKey = cfg.gateway.apiKey || '';
     const only = Array.isArray(body.agentIds)
       ? body.agentIds.filter((a): a is string => typeof a === 'string' && a.trim().length > 0)
       : undefined;
@@ -1968,12 +1971,18 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
   });
 
   app.post('/api/gateway/keys', async (req, reply) => {
-    const body = (req.body || {}) as { name?: string; key?: string };
+    const body = (req.body || {}) as { name?: string; key?: string; scope?: 'admin' | 'mcp' | 'group' | 'all' };
+    const validScopes = ['admin', 'mcp', 'group', 'all'];
+    if (!body.scope || !validScopes.includes(body.scope)) {
+      return reply.status(400).send({
+        error: { message: `Scope is required and must be one of: ${validScopes.join(", ")}` },
+      });
+    }
     try {
-      const item = await opts.manager.addApiKey(body.name || '', body.key);
+      const item = await opts.manager.addApiKey(body.name || '', body.key, body.scope);
       return { key: item };
     } catch (e) {
-      return reply.status(500).send({ error: { message: e instanceof Error ? e.message : String(e) } });
+      return reply.status(400).send({ error: { message: e instanceof Error ? e.message : String(e) } });
     }
   });
 
@@ -2160,6 +2169,220 @@ export function registerGatewayRoutes(app: FastifyInstance, opts: {
       return await opts.manager.testRouterGroup(id);
     } catch (e) {
       return reply.status(400).send({ error: { message: e instanceof Error ? e.message : String(e) } });
+    }
+  });
+
+  function parseCookies(header?: string): Record<string, string> {
+    const result: Record<string, string> = {};
+    if (!header || typeof header !== 'string') return result;
+    const parts = header.split(';');
+    for (const part of parts) {
+      const idx = part.indexOf('=');
+      if (idx > 0) {
+        const key = part.slice(0, idx).trim();
+        const val = part.slice(idx + 1).trim();
+        result[key] = decodeURIComponent(val);
+      }
+    }
+    return result;
+  }
+
+  function extractHumanSession(req: FastifyRequest): HumanSession | null {
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionToken = cookies['emo_session_id'];
+    if (!sessionToken) return null;
+    return globalHumanSessionManager.getSession(sessionToken);
+  }
+
+  function isLoopbackIp(ip: string): boolean {
+    return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  }
+
+  function authenticateHumanSession(req: FastifyRequest): { ok: boolean; session?: HumanSession; error?: string; status?: number } {
+    // 1. Fetch metadata check: reject cross-site requests to approval endpoints
+    const secFetchSite = req.headers['sec-fetch-site'];
+    if (secFetchSite === 'cross-site') {
+      return {
+        ok: false,
+        status: 403,
+        error: 'CROSS_SITE_PROHIBITED: Cross-site requests to approval endpoints are prohibited.',
+      };
+    }
+
+    // 2. Cookie only! (No generic X-Session-Token header)
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionToken = cookies['emo_session_id'];
+    if (!sessionToken) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'HUMAN_SESSION_REQUIRED: Approval actions require an active, authenticated local human session cookie. Agents and API keys cannot self-approve operations.',
+      };
+    }
+
+    const session = globalHumanSessionManager.getSession(sessionToken);
+    if (!session) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'HUMAN_SESSION_EXPIRED: The local human session is invalid or expired. Please log in again.',
+      };
+    }
+
+    // Strict CSRF verification for state-changing approval operations
+    const csrfHeader = (req.headers['x-csrf-token'] || req.headers['x-csrftoken']) as string | undefined;
+    if (!globalHumanSessionManager.validateCsrf(session, csrfHeader)) {
+      return {
+        ok: false,
+        status: 403,
+        error: 'CSRF_VALIDATION_FAILED: Invalid or missing CSRF token on state-changing approval request.',
+      };
+    }
+
+    return { ok: true, session };
+  }
+
+  // --- Human Session Authentication Endpoints ---
+  app.post('/api/gateway/session/login', async (req, reply) => {
+    const body = (req.body || {}) as { apiKey?: string; passcode?: string; localInteractive?: boolean };
+    const authHeader = req.headers.authorization;
+
+    // 1. Strictly block API keys from attempting to bootstrap human sessions!
+    if (body.apiKey || authHeader) {
+      return reply.status(403).send({
+        error: {
+          message: 'AGENT_LOGIN_PROHIBITED: API keys cannot create human operator sessions. Human sessions require interactive local UI verification.',
+          code: 'AGENT_LOGIN_PROHIBITED',
+        },
+      });
+    }
+
+    // 2. Check Fetch Metadata: block cross-site requests
+    const secFetchSite = req.headers['sec-fetch-site'];
+    if (secFetchSite === 'cross-site') {
+      return reply.status(403).send({
+        error: {
+          message: 'CROSS_SITE_PROHIBITED: Cross-origin session login is prohibited.',
+          code: 'CROSS_ORIGIN_PROHIBITED',
+        },
+      });
+    }
+
+    // 3. Local human operator verification: must be from loopback and either pass passcode or interactive local confirmation
+    const clientIp = req.ip || req.raw.socket.remoteAddress || '';
+    const isLoopback = isLoopbackIp(clientIp);
+    const validPasscode = body.passcode && globalHumanSessionManager.verifyLocalOperatorPasscode(body.passcode);
+    const localInteractive = isLoopback && (body.localInteractive === true || validPasscode);
+
+    if (!validPasscode && !localInteractive) {
+      return reply.status(401).send({
+        error: {
+          message: 'LOCAL_OPERATOR_REQUIRED: Interactive human operator verification required.',
+          code: 'AUTH_FAILED',
+        },
+      });
+    }
+
+    const session = globalHumanSessionManager.createSession('human:local_operator');
+    const isSecure = req.protocol === 'https';
+    reply.header(
+      'Set-Cookie',
+      `emo_session_id=${session.id}; Path=/api/gateway/; HttpOnly; SameSite=Strict${isSecure ? '; Secure' : ''}; Max-Age=3600`
+    );
+
+    // SECURITY: NEVER return sessionId or csrfToken in login JSON!
+    return {
+      ok: true,
+      actor: session.actor,
+      expiresAt: session.expiresAt,
+    };
+  });
+
+  // Dedicated endpoint for local UI to fetch CSRF token using HttpOnly cookie
+  app.get('/api/gateway/session/csrf', async (req, reply) => {
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionToken = cookies['emo_session_id'];
+    if (!sessionToken) {
+      return reply.status(401).send({ error: { message: 'HUMAN_SESSION_REQUIRED', code: 'UNAUTHORIZED' } });
+    }
+    const session = globalHumanSessionManager.getSession(sessionToken);
+    if (!session) {
+      return reply.status(401).send({ error: { message: 'HUMAN_SESSION_EXPIRED', code: 'UNAUTHORIZED' } });
+    }
+    return {
+      ok: true,
+      csrfToken: session.csrfToken,
+    };
+  });
+
+  app.post('/api/gateway/session/logout', async (req, reply) => {
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionToken = cookies['emo_session_id'];
+    if (sessionToken) {
+      globalHumanSessionManager.destroySession(sessionToken);
+    }
+    reply.header(
+      'Set-Cookie',
+      'emo_session_id=; Path=/api/gateway/; HttpOnly; SameSite=Strict; Max-Age=0'
+    );
+    return { ok: true };
+  });
+
+  app.get('/api/gateway/session/me', async (req) => {
+    const session = extractHumanSession(req);
+    if (!session) {
+      return { authenticated: false };
+    }
+    return {
+      authenticated: true,
+      actor: session.actor,
+      expiresAt: session.expiresAt,
+    };
+  });
+
+  // --- Centralized Approval Manager Routes ---
+  app.get('/api/gateway/approvals', async (req) => {
+    const q = (req.query || {}) as { status?: string };
+    return {
+      requests: globalApprovalManager.listRequests(q.status as any),
+    };
+  });
+
+  app.get('/api/gateway/approvals/audit', async (req) => {
+    const q = (req.query || {}) as { limit?: string };
+    const limit = q.limit ? Number(q.limit) : 100;
+    return {
+      auditLogs: globalApprovalManager.getAuditLogs(limit),
+    };
+  });
+
+  app.post('/api/gateway/approvals/:id/approve', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const auth = authenticateHumanSession(req);
+    if (!auth.ok || !auth.session) {
+      return reply.status(auth.status || 401).send({ error: { message: auth.error } });
+    }
+
+    try {
+      const result = globalApprovalManager.approve(id, auth.session.actor);
+      return { ok: true, approval: result };
+    } catch (e) {
+      return reply.status(400).send({ error: { message: (e as Error).message } });
+    }
+  });
+
+  app.post('/api/gateway/approvals/:id/reject', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const auth = authenticateHumanSession(req);
+    if (!auth.ok || !auth.session) {
+      return reply.status(auth.status || 401).send({ error: { message: auth.error } });
+    }
+
+    try {
+      const result = globalApprovalManager.reject(id, auth.session.actor);
+      return { ok: true, approval: result };
+    } catch (e) {
+      return reply.status(400).send({ error: { message: (e as Error).message } });
     }
   });
 }

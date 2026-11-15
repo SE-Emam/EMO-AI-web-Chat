@@ -106,6 +106,14 @@ export interface ProviderMetaState {
   lastConnectionLatencyMs?: number;
 }
 
+
+export interface KeyAuthResult {
+  valid: boolean;
+  keyId?: string;
+  scope: 'admin' | 'mcp' | 'group' | 'all';
+  scopedGroup?: RouterGroup;
+  error?: 'KEY_INVALID' | 'KEY_DISABLED' | 'KEY_EXPIRED' | 'INSUFFICIENT_SCOPE';
+}
 export interface ApiKeyItem {
   id: string;
   name: string;
@@ -113,6 +121,8 @@ export interface ApiKeyItem {
   createdAt: string;
   lastUsedAt?: string;
   enabled: boolean;
+  scope?: "all" | "admin" | "mcp" | "group";
+  expiresAt?: string;
 }
 
 export interface CustomUpstreamProvider {
@@ -155,6 +165,8 @@ export interface GatewaySettings {
   host: string;
   baseUriDisplay: string;
   apiKey: string;
+  adminApiKey?: string;
+  mcpApiKey?: string;
   requireApiKey: boolean;
   serviceEnabled?: boolean;
   apiKeys?: ApiKeyItem[];

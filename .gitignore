@@ -38,10 +38,3 @@ test-results-*.txt
 *-results-*.txt
 FINAL_PRE_COMMIT_AUDIT.md
 IMPLEMENTATION_*.md
-
-# Tests and Internal Tooling
-tests/
-tsconfig.test.json
-vitest.config.ts
-*.test.ts
-*.spec.ts

@@ -223,7 +223,7 @@ export class DefaultArenaDriver implements ArenaDriver {
           const visible = await loc.first().isVisible();
           if (visible) {
             throw new Error(
-              "Cloudflare Turnstile challenge detected on Arena. Please run 'webbridge login' or open the browser in non-headless mode to solve the verification."
+              "Cloudflare Turnstile challenge detected on EMO-AI. Please run 'emo-ai-web login' or open the browser in non-headless mode to solve the verification."
             );
           }
         }
